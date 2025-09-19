@@ -8,12 +8,12 @@ services:
     environment:
       EULA: "TRUE"
       VERSION: "1.20.4"  # ワールドに合わせて変更
-      TYPE: "PAPER"   # これでPaperサーバーとして起動
+      TYPE: "PAPER"       # Paperサーバーとして起動
     volumes:
       - ./mc-data:/data
     restart: unless-stopped
 
-  api:
+  mc-api:
     build: ./api
     container_name: mc-api
     ports:
@@ -21,5 +21,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./mc-data:/mc-data   # アップロードファイル保存先
+      - ./api:/app            # APIコードのライブリロード用
+      - ./web:/app/web        # WebUIファイルのライブリロード用
     depends_on:
       - mc-server
