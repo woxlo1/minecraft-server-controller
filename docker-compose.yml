@@ -21,7 +21,8 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./mc-data:/mc-data
-      - ./web:/app/web       # ここで web/index.html をコンテナに渡す
-      - ./api:/app           # api.py を反映
+      - ./backups:/backups
+      - ./api:/app
+      - ./web:/app/web
     depends_on:
       - mc-server
