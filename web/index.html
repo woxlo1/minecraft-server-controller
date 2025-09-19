@@ -3,21 +3,42 @@
 <head>
 <meta charset="UTF-8">
 <title>Minecraft Server Controller</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
+  h1,h2 { text-align: center; }
+  .section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 8px; }
+  button { margin: 5px; padding: 8px 16px; cursor: pointer; }
+  #status, #uploadResult, #backupResult, #logsResult { font-weight: bold; white-space: pre-wrap; }
+  textarea { width: 100%; height: 200px; margin-top: 10px; }
+</style>
 </head>
 <body>
+
 <h1>Minecraft Server Controller</h1>
 
+<div class="section">
 <h2>Server Control</h2>
 <button onclick="control('start')">Start</button>
 <button onclick="control('stop')">Stop</button>
 <button onclick="getStatus()">Status</button>
 <p id="status">Status: Unknown</p>
+</div>
 
+<div class="section">
 <h2>Upload File / Folder</h2>
-<!-- webkitdirectoryでフォルダ選択可能 -->
 <input type="file" id="fileInput" webkitdirectory directory multiple>
 <button onclick="uploadFile()">Upload</button>
 <p id="uploadResult"></p>
+</div>
+
+<div class="section">
+<h2>Backup & Logs</h2>
+<button onclick="backupServer()">Backup</button>
+<p id="backupResult"></p>
+
+<button onclick="getLogs()">Show Logs</button>
+<textarea id="logsResult" readonly></textarea>
+</div>
 
 <script>
 async function control(action){
@@ -32,24 +53,32 @@ async function getStatus(){
 }
 
 async function uploadFile(){
-  const fileInput = document.getElementById("fileInput");
-  const files = fileInput.files;
+  const files = document.getElementById("fileInput").files;
   if(!files.length) return alert("ファイルまたはフォルダを選択してください");
-
   const formData = new FormData();
   for(const file of files){
-    // folder内の相対パスをそのまま送信
     formData.append("file", file, file.webkitRelativePath || file.name);
   }
-
-  const res = await fetch("http://localhost:8000/upload", {
-    method:"POST",
-    body: formData
-  });
-
+  const res = await fetch("http://localhost:8000/upload", {method:"POST", body: formData});
   const data = await res.json();
-  document.getElementById("uploadResult").innerText =
-    `Files uploaded and server restarted`;
+  const result = document.getElementById("uploadResult");
+  result.innerText = "Files uploaded and server restarted";
+  result.style.color = "green";
+}
+
+async function backupServer(){
+  const res = await fetch("http://localhost:8000/backup", {method:"POST"});
+  const data = await res.json();
+  const result = document.getElementById("backupResult");
+  result.innerText = `Backup created: ${data.backup_file}`;
+  result.style.color = "purple";
+}
+
+async function getLogs(){
+  const res = await fetch("http://localhost:8000/logs");
+  const data = await res.json();
+  const textarea = document.getElementById("logsResult");
+  textarea.value = data.logs || data.message;
 }
 </script>
 </body>
