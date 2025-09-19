@@ -7,8 +7,8 @@ services:
       - "25565:25565"
     environment:
       EULA: "TRUE"
-      VERSION: "1.20.4"  # ワールドに合わせて変更
-      TYPE: "PAPER"       # Paperサーバーとして起動
+      VERSION: "1.20.4"
+      TYPE: "PAPER"
     volumes:
       - ./mc-data:/data
     restart: unless-stopped
@@ -20,8 +20,8 @@ services:
       - "8000:8000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./mc-data:/mc-data   # アップロードファイル保存先
-      - ./api:/app            # APIコードのライブリロード用
-      - ./web:/app/web        # WebUIファイルのライブリロード用
+      - ./mc-data:/mc-data
+      - ./web:/app/web       # ここで web/index.html をコンテナに渡す
+      - ./api:/app           # api.py を反映
     depends_on:
       - mc-server
