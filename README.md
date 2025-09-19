@@ -5,20 +5,6 @@
 - サーバー起動 / 停止 / 状態確認  
 - ファイル・フォルダアップロード（自動反映）
 
-## 構成
-minecraft-server-controller/
-├── docker-compose.yml
-├── mc-data/ # Minecraftサーバーデータ
-├── api/
-│ ├── api.py
-│ ├── requirements.txt
-│ └── Dockerfile
-└── web/
-└── index.html # WebUI
-
-shell
-コードをコピーする
-
 ## 使い方
 
 ### Docker 起動
