@@ -1,0 +1,25 @@
+version: "3.8"
+services:
+  mc-server:
+    image: itzg/minecraft-server
+    container_name: mc-server
+    ports:
+      - "25565:25565"
+    environment:
+      EULA: "TRUE"
+      VERSION: "1.20.4"  # ワールドに合わせて変更
+      TYPE: "PAPER"   # これでPaperサーバーとして起動
+    volumes:
+      - ./mc-data:/data
+    restart: unless-stopped
+
+  api:
+    build: ./api
+    container_name: mc-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./mc-data:/mc-data   # アップロードファイル保存先
+    depends_on:
+      - mc-server

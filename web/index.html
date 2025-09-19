@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>Minecraft Server Controller</title>
+</head>
+<body>
+<h1>Minecraft Server Controller</h1>
+
+<h2>Server Control</h2>
+<button onclick="control('start')">Start</button>
+<button onclick="control('stop')">Stop</button>
+<button onclick="getStatus()">Status</button>
+<p id="status">Status: Unknown</p>
+
+<h2>Upload File / Folder</h2>
+<!-- webkitdirectoryでフォルダ選択可能 -->
+<input type="file" id="fileInput" webkitdirectory directory multiple>
+<button onclick="uploadFile()">Upload</button>
+<p id="uploadResult"></p>
+
+<script>
+async function control(action){
+  await fetch(`http://localhost:8000/${action}`, {method:"POST"});
+  getStatus();
+}
+
+async function getStatus(){
+  const res = await fetch("http://localhost:8000/status");
+  const data = await res.json();
+  document.getElementById("status").innerText = "Status: "+data.status;
+}
+
+async function uploadFile(){
+  const fileInput = document.getElementById("fileInput");
+  const files = fileInput.files;
+  if(!files.length) return alert("ファイルまたはフォルダを選択してください");
+
+  const formData = new FormData();
+  for(const file of files){
+    // folder内の相対パスをそのまま送信
+    formData.append("file", file, file.webkitRelativePath || file.name);
+  }
+
+  const res = await fetch("http://localhost:8000/upload", {
+    method:"POST",
+    body: formData
+  });
+
+  const data = await res.json();
+  document.getElementById("uploadResult").innerText =
+    `Files uploaded and server restarted`;
+}
+</script>
+</body>
+</html>
