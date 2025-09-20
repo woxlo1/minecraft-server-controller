@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import JSONResponse
 import shutil, subprocess, os, zipfile, datetime
 
@@ -78,3 +78,22 @@ async def get_logs():
     with open(LOG_FILE, "r", encoding="utf-8") as f:
         logs = f.read()
     return {"logs": logs}
+
+# -----------------------------
+# 5️⃣ サーバーコンソールコマンド
+# -----------------------------
+@app.post("/exec")
+async def exec_command(command: str = Form(...)):
+    """
+    サーバーコンソールにコマンド送信
+    """
+    try:
+        result = subprocess.run(
+            ["docker", "exec", "mc-server", "rcon-cli", command],
+            capture_output=True, text=True, timeout=10
+        )
+        output = result.stdout.strip() or result.stderr.strip()
+    except subprocess.TimeoutExpired:
+        output = "コマンド実行がタイムアウトしました"
+    
+    return {"command": command, "output": output}
