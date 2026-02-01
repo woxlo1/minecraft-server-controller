@@ -26,11 +26,11 @@ os.makedirs(BACKUP_DIR, exist_ok=True)
 app = FastAPI(
     title="Minecraft Server Control API",
     description="Minecraft サーバー管理用 Web API",
-    version="2.1.0"
+    version="2.1.1"
 )
 
 # =============================
-# CORS（Webフロント用）
+# CORS
 # =============================
 app.add_middleware(
     CORSMiddleware,
@@ -41,7 +41,7 @@ app.add_middleware(
 )
 
 # =============================
-# API Key 管理（メモリ）
+# API Key 管理
 # =============================
 API_KEYS: dict[str, dict] = {}
 
@@ -64,9 +64,10 @@ class ExecHistory(BaseModel):
     output: str
 
 EXEC_HISTORY: list[ExecHistory] = []
+MAX_HISTORY = 100
 
 # =============================
-# API Key 発行・管理
+# Auth
 # =============================
 @app.post("/auth/keys", tags=["Auth"], summary="API Key 発行（root専用）")
 def create_api_key(role: str = "admin", _: None = Depends(verify_root)):
@@ -89,8 +90,7 @@ def delete_api_key(key: str, _: None = Depends(verify_root)):
 # =============================
 # ファイルアップロード
 # =============================
-@app.post("/upload", tags=["File"], summary="ファイル / フォルダアップロード",
-          dependencies=[Depends(verify_api_key)])
+@app.post("/upload", tags=["File"], dependencies=[Depends(verify_api_key)])
 async def upload(file: UploadFile = File(...)):
     path = os.path.join(MC_DATA_DIR, file.filename)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -103,7 +103,11 @@ async def upload(file: UploadFile = File(...)):
             zip_ref.extractall(MC_DATA_DIR)
         os.remove(path)
 
-    subprocess.run(["docker", "restart", "mc-server"])
+    try:
+        subprocess.run(["docker", "restart", "mc-server"], check=True)
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
     return {"status": "uploaded", "filename": file.filename}
 
 # =============================
@@ -111,12 +115,12 @@ async def upload(file: UploadFile = File(...)):
 # =============================
 @app.post("/start", tags=["Server"], dependencies=[Depends(verify_api_key)])
 def start():
-    subprocess.run(["docker", "start", "mc-server"])
+    subprocess.run(["docker", "start", "mc-server"], check=False)
     return {"status": "started"}
 
 @app.post("/stop", tags=["Server"], dependencies=[Depends(verify_api_key)])
 def stop():
-    subprocess.run(["docker", "stop", "mc-server"])
+    subprocess.run(["docker", "stop", "mc-server"], check=False)
     return {"status": "stopped"}
 
 @app.get("/status", tags=["Server"], dependencies=[Depends(verify_api_key)])
@@ -125,7 +129,8 @@ def status():
         ["docker", "ps", "-f", "name=mc-server", "--format", "{{.Status}}"],
         capture_output=True, text=True
     )
-    return {"status": result.stdout.strip() or "stopped"}
+    status = result.stdout.strip()
+    return {"status": status if status else "stopped"}
 
 # =============================
 # バックアップ
@@ -154,7 +159,7 @@ def logs():
         return {"logs": f.read()}
 
 # =============================
-# コンソール実行
+# コンソール
 # =============================
 @app.post("/exec", tags=["Console"], dependencies=[Depends(verify_api_key)])
 def exec_cmd(command: str = Form(...)):
@@ -172,7 +177,10 @@ def exec_cmd(command: str = Form(...)):
         command=command,
         output=output
     )
+
     EXEC_HISTORY.append(entry)
+    if len(EXEC_HISTORY) > MAX_HISTORY:
+        EXEC_HISTORY.pop(0)
 
     return entry
 
@@ -180,10 +188,10 @@ def exec_cmd(command: str = Form(...)):
          response_model=list[ExecHistory],
          dependencies=[Depends(verify_api_key)])
 def exec_history():
-    return EXEC_HISTORY[-50:]
+    return EXEC_HISTORY
 
 # =============================
-# サーバー情報
+# メトリクス
 # =============================
 @app.get("/metrics", tags=["Metrics"], dependencies=[Depends(verify_api_key)])
 def metrics():
@@ -194,5 +202,5 @@ def metrics():
             "used_gb": round(mem.used / 1024**3, 2),
             "percent": mem.percent
         },
-        "note": "TPS は exec で /tps を実行してください"
+        "note": "TPS は /exec で tps コマンドを実行してください"
     }
