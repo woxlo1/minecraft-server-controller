@@ -7,7 +7,7 @@ on:
   pull_request:
     branches:
       - main
-
+  workflow_dispatch:  # ← これを追加すると手動トリガー可能
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
