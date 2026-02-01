@@ -123,121 +123,176 @@ pre {
 <pre id="auditResult">root API Key でのみ表示可能</pre>
 </div>
 
+<!-- Players -->
+<div class="section">
+  <h2>🧑‍💻 Players</h2>
+  <button onclick="loadPlayers()">Load Online Players</button>
+  <select id="playerSelect" onchange="showPlayerDetail()">
+    <option value="">-- プレイヤーを選択 --</option>
+  </select>
+  <pre id="playerDetail"></pre>
+</div>
+
 <script>
+/* ========= Players ========= */
+async function loadPlayers() {
+  const res = await fetch(`${API}/players`, { headers: headers() });
+  if (!res.ok) {
+    alert("プレイヤー情報取得失敗");
+    return;
+  }
+  const data = await res.json();
+  const select = document.getElementById("playerSelect");
+  select.innerHTML = '<option value="">-- プレイヤーを選択 --</option>';
+  data.players.forEach(p => {
+    const opt = document.createElement("option");
+    opt.value = p;
+    opt.innerText = p;
+    select.appendChild(opt);
+  });
+  document.getElementById("playerDetail").textContent = `オンラインプレイヤー: ${data.count}`;
+}
+
+async function showPlayerDetail() {
+  const name = document.getElementById("playerSelect").value;
+  if (!name) {
+    document.getElementById("playerDetail").textContent = "";
+    return;
+  }
+  const res = await fetch(`${API}/players/${name}`, { headers: headers() });
+  if (!res.ok) {
+    document.getElementById("playerDetail").textContent = "詳細取得失敗（プレイヤーがオフラインかも）";
+    return;
+  }
+  const data = await res.json();
+  document.getElementById("playerDetail").textContent = JSON.stringify(data.raw_nbt, null, 2);
+}
+
 const API = "http://localhost:8000";
 
-/* ========= API KEY ========= */
-function apiKey() {
-  return localStorage.getItem("apiKey") || "";
-}
-function headers() {
-  return { "X-API-Key": apiKey() };
-}
+
+// DOM Elements
+const apiKeyInput = document.getElementById("apiKeyInput");
+const cmdInput = document.getElementById("cmdInput");
+const cmdOutput = document.getElementById("cmdOutput");
+const fileInput = document.getElementById("fileInput");
+const uploadResult = document.getElementById("uploadResult");
+const backupResult = document.getElementById("backupResult");
+const logsResult = document.getElementById("logsResult");
+const metricsResult = document.getElementById("metricsResult");
+const auditResult = document.getElementById("auditResult");
+const statusEl = document.getElementById("status");
+const playerSelect = document.getElementById("playerSelect");
+const playerDetail = document.getElementById("playerDetail");
+
+// ========= API Key =========
+function apiKey() { return localStorage.getItem("apiKey")||""; }
+function headers() { return { "X-API-Key": apiKey() }; }
 function saveKey() {
   const key = apiKeyInput.value.trim();
-  if (!key) return alert("API Key を入力してください");
+  if(!key) return alert("API Key を入力してください");
   localStorage.setItem("apiKey", key);
   alert("API Key saved");
 }
 
-/* ========= Server ========= */
-async function control(action) {
-  await fetch(`${API}/${action}`, { method: "POST", headers: headers() });
+// ========= Server =========
+async function control(action){
+  await fetch(`${API}/${action}`, {method:"POST", headers:headers()});
   getStatus();
 }
-async function getStatus() {
-  try {
-    const res = await fetch(`${API}/status`, { headers: headers() });
+async function getStatus(){
+  try{
+    const res = await fetch(`${API}/status`,{headers:headers()});
     const data = await res.json();
-    const el = document.getElementById("status");
-    el.innerText = "Status: " + data.status;
-    el.className = data.status.includes("Up")
-      ? "status-running"
-      : "status-stopped";
-  } catch {
-    status.innerText = "Status: API unreachable";
-    status.className = "status-stopped";
+    statusEl.innerText = "Status: "+data.status;
+    statusEl.className = data.status.includes("Up")?"status-running":"status-stopped";
+  }catch{
+    statusEl.innerText="Status: API unreachable";
+    statusEl.className="status-stopped";
   }
 }
 
-/* ========= Console ========= */
-async function sendCommand() {
-  const cmd = cmdInput.value.trim();
-  if (!cmd) return;
+// ========= Console =========
+async function sendCommand(){
+  const cmd=cmdInput.value.trim();
+  if(!cmd) return;
   const form = new FormData();
-  form.append("command", cmd);
-  const res = await fetch(`${API}/exec`, {
-    method: "POST",
-    headers: headers(),
-    body: form
-  });
+  form.append("command",cmd);
+  const res = await fetch(`${API}/exec`,{method:"POST", headers:headers(), body:form});
   const data = await res.json();
   cmdOutput.value += `> ${data.command}\n${data.output}\n\n`;
   cmdOutput.scrollTop = cmdOutput.scrollHeight;
-  cmdInput.value = "";
+  cmdInput.value="";
 }
-async function loadHistory() {
-  const res = await fetch(`${API}/exec/history`, { headers: headers() });
+async function loadHistory(){
+  const res = await fetch(`${API}/exec/history`,{headers:headers()});
   const list = await res.json();
-  cmdOutput.value = "";
-  list.forEach(e => {
-    cmdOutput.value += `[${e.time}]\n> ${e.command}\n${e.output}\n\n`;
-  });
+  cmdOutput.value="";
+  list.forEach(e=>cmdOutput.value+=`[${e.time}]\n> ${e.command}\n${e.output}\n\n`);
 }
 
-/* ========= Upload ========= */
-async function upload() {
-  const files = fileInput.files;
-  if (!files.length) return alert("ファイル or フォルダを選択してください");
-  for (const file of files) {
+// ========= Upload =========
+async function upload(){
+  const files=fileInput.files;
+  if(!files.length) return alert("ファイル or フォルダを選択してください");
+  for(const file of files){
     const form = new FormData();
-    form.append("file", file, file.webkitRelativePath || file.name);
-    await fetch(`${API}/upload`, {
-      method: "POST",
-      headers: headers(),
-      body: form
-    });
+    form.append("file", file, file.webkitRelativePath||file.name);
+    await fetch(`${API}/upload`,{method:"POST",headers:headers(),body:form});
   }
-  uploadResult.innerText = "Upload completed & server restarted";
-  uploadResult.style.color = "green";
+  uploadResult.innerText="Upload completed & server restarted";
+  uploadResult.style.color="green";
 }
 
-/* ========= Backup ========= */
-async function backup() {
-  const res = await fetch(`${API}/backup`, {
-    method: "POST",
-    headers: headers()
-  });
+// ========= Backup =========
+async function backup(){
+  const res = await fetch(`${API}/backup`,{method:"POST", headers:headers()});
   const data = await res.json();
   backupResult.innerText = data.backup;
 }
 
-/* ========= Logs ========= */
-async function getLogs() {
-  const res = await fetch(`${API}/logs`, { headers: headers() });
+// ========= Logs =========
+async function getLogs(){
+  const res = await fetch(`${API}/logs`,{headers:headers()});
   const data = await res.json();
-  logsResult.value = data.logs || "";
-  logsResult.scrollTop = logsResult.scrollHeight;
+  logsResult.value=data.logs||"";
+  logsResult.scrollTop=logsResult.scrollHeight;
 }
 
-/* ========= Metrics ========= */
-async function getMetrics() {
-  const res = await fetch(`${API}/metrics`, { headers: headers() });
-  metricsResult.textContent = JSON.stringify(await res.json(), null, 2);
+// ========= Metrics =========
+async function getMetrics(){
+  const res = await fetch(`${API}/metrics`,{headers:headers()});
+  metricsResult.textContent=JSON.stringify(await res.json(),null,2);
 }
 
-/* ========= Audit Logs ========= */
-async function getAuditLogs() {
-  const res = await fetch(`${API}/audit/logs`, { headers: headers() });
-  if (!res.ok) {
-    auditResult.textContent = "権限がありません（root API Key が必要）";
-    return;
-  }
+// ========= Audit Logs =========
+async function getAuditLogs(){
+  const res = await fetch(`${API}/audit/logs`,{headers:headers()});
+  if(!res.ok){ auditResult.textContent="権限がありません（root API Key が必要）"; return; }
   const logs = await res.json();
-  auditResult.textContent = logs.map(l =>
-    `[${l.time}] (${l.role}) ${l.action}\n  detail: ${l.detail}\n  ip: ${l.ip}\n`
-  ).join("\n");
+  auditResult.textContent = logs.map(l=>`[${l.time}] (${l.role}) ${l.action}\n  detail: ${l.detail}\n  ip: ${l.ip}\n`).join("\n");
 }
+
+// ========= Players =========
+async function loadPlayers(){
+  const res = await fetch(`${API}/players`,{headers:headers()});
+  if(!res.ok){ alert("プレイヤー情報取得失敗"); return; }
+  const data = await res.json();
+  playerSelect.innerHTML='<option value="">-- プレイヤーを選択 --</option>';
+  data.players.forEach(p=>{ const opt=document.createElement("option"); opt.value=p; opt.innerText=p; playerSelect.appendChild(opt); });
+  playerDetail.textContent=`オンラインプレイヤー: ${data.count}`;
+}
+async function showPlayerDetail(){
+  const name=playerSelect.value;
+  if(!name){ playerDetail.textContent=""; return; }
+  const res=await fetch(`${API}/players/${name}`,{headers:headers()});
+  if(!res.ok){ playerDetail.textContent="詳細取得失敗（プレイヤーがオフラインかも）"; return; }
+  const data=await res.json();
+  playerDetail.textContent=JSON.stringify(data.raw_nbt,null,2);
+}
+
+// Auto-refresh players every 5s
+setInterval(()=>{ if(apiKey()) loadPlayers(); },5000);
 
 /* ========= Init ========= */
 apiKeyInput.value = apiKey();

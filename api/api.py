@@ -79,9 +79,18 @@ app.add_middleware(
 # =============================
 # Auth
 # =============================
-def verify_root(x_api_key: str = Header(...)):
+def verify_root(
+    request: Request,
+    x_api_key: str = Header(...)
+):
     if x_api_key != ROOT_API_KEY:
         raise HTTPException(status_code=403, detail="Root API Key required")
+
+    return {
+        "api_key": "ROOT",
+        "role": "root",
+        "ip": request.client.host
+    }
 
 def verify_api_key(
     request: Request,
@@ -128,7 +137,7 @@ def log_action(user, action, detail=""):
         ))
 
 @app.get("/audit/logs", tags=["Audit"])
-def get_audit_logs(_: None = Depends(verify_root)):
+def get_audit_logs(user=Depends(verify_root)):
     with get_db() as conn:
         cur = conn.execute("""
         SELECT time, api_key, role, action, detail, ip
@@ -298,4 +307,54 @@ def metrics(user=Depends(verify_api_key)):
             "used_gb": round(mem.used / 1024**3, 2),
             "percent": mem.percent
         }
+    }
+
+# =============================
+# Players
+# =============================
+def rcon(cmd: str) -> str:
+    result = subprocess.run(
+        ["docker", "exec", "mc-server", "rcon-cli", cmd],
+        capture_output=True,
+        text=True
+    )
+    return (result.stdout or result.stderr).strip()
+
+
+@app.get("/players", tags=["Players"])
+def list_players(user=Depends(verify_api_key)):
+    """
+    オンラインプレイヤー一覧
+    """
+    output = rcon("list")
+
+    # 例: There are 2 of a max of 20 players online: Steve, Alex
+    if ":" not in output:
+        return {"players": []}
+
+    players = output.split(":", 1)[1].strip()
+    player_list = [p.strip() for p in players.split(",")] if players else []
+
+    log_action(user, "players_list")
+    return {
+        "count": len(player_list),
+        "players": player_list
+    }
+
+
+@app.get("/players/{name}", tags=["Players"])
+def player_detail(name: str, user=Depends(verify_api_key)):
+    """
+    プレイヤー詳細情報（NBT）
+    """
+    raw = rcon(f"data get entity {name}")
+
+    if "No entity was found" in raw:
+        raise HTTPException(status_code=404, detail="Player not online")
+
+    log_action(user, "player_detail", name)
+
+    return {
+        "player": name,
+        "raw_nbt": raw
     }
