@@ -1,0 +1,67 @@
+name: CI/CD
+
+on:
+  push:
+    branches:
+      - main  # main ブランチに push されたら動く
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1️⃣ リポジトリのチェックアウト
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # 2️⃣ Python 環境セットアップ（API のテスト用）
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.12"
+
+      # 3️⃣ 依存関係インストール
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r api/requirements.txt
+
+      # 4️⃣ API の簡単なテスト（オプション）
+      - name: Run API tests
+        run: |
+          # ここでテストスクリプトや lint を実行
+          echo "Skipping tests for now"
+
+      # 5️⃣ Docker イメージビルド
+      - name: Build Docker image
+        run: |
+          docker build -t myusername/mc-api:latest ./api
+
+      # 6️⃣ DockerHub にログイン
+      - name: DockerHub Login
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # 7️⃣ DockerHub にプッシュ
+      - name: Push Docker image
+        run: |
+          docker tag myusername/mc-api:latest myusername/mc-api:${{ github.sha }}
+          docker push myusername/mc-api:latest
+          docker push myusername/mc-api:${{ github.sha }}
+
+      # 8️⃣ リモートサーバーにデプロイ（オプション）
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v0.1.9
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            cd ~/minecraft
+            docker-compose pull mc-api
+            docker-compose up -d mc-api
