@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   mc-server:
     image: itzg/minecraft-server
@@ -25,7 +23,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./mc-data:/mc-data
       - ./backups:/backups
-      - ./api:/app
+      - ./data:/data          # ← ★ SQLite 永続化（最重要）
+      - ./api:/app            # 開発用（本番では消す）
       - ./web:/app/web
     depends_on:
       - mc-server

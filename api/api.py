@@ -8,6 +8,7 @@ import zipfile
 import datetime
 import psutil
 import secrets
+import sqlite3
 
 # =============================
 # 設定
@@ -18,7 +19,27 @@ LOG_FILE = os.path.join(MC_DATA_DIR, "logs", "latest.log")
 
 ROOT_API_KEY = os.getenv("ROOT_API_KEY", "dev-root-key")
 
+DB_DIR = "/data"
+DB_PATH = os.path.join(DB_DIR, "api_keys.db")
+
 os.makedirs(BACKUP_DIR, exist_ok=True)
+os.makedirs(DB_DIR, exist_ok=True)
+
+# =============================
+# DB
+# =============================
+def get_db():
+    return sqlite3.connect(DB_PATH, check_same_thread=False)
+
+def init_db():
+    with get_db() as conn:
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS api_keys (
+            key TEXT PRIMARY KEY,
+            role TEXT NOT NULL,
+            created TEXT NOT NULL
+        )
+        """)
 
 # =============================
 # FastAPI
@@ -26,8 +47,12 @@ os.makedirs(BACKUP_DIR, exist_ok=True)
 app = FastAPI(
     title="Minecraft Server Control API",
     description="Minecraft サーバー管理用 Web API",
-    version="2.1.1"
+    version="2.2.0"
 )
+
+@app.on_event("startup")
+def startup():
+    init_db()
 
 # =============================
 # CORS
@@ -41,10 +66,8 @@ app.add_middleware(
 )
 
 # =============================
-# API Key 管理
+# Auth
 # =============================
-API_KEYS: dict[str, dict] = {}
-
 def verify_root(x_api_key: str = Header(...)):
     if x_api_key != ROOT_API_KEY:
         raise HTTPException(status_code=403, detail="Root API Key required")
@@ -52,8 +75,14 @@ def verify_root(x_api_key: str = Header(...)):
 def verify_api_key(x_api_key: str = Header(...)):
     if x_api_key == ROOT_API_KEY:
         return
-    if x_api_key not in API_KEYS:
-        raise HTTPException(status_code=403, detail="Invalid API Key")
+
+    with get_db() as conn:
+        cur = conn.execute(
+            "SELECT role FROM api_keys WHERE key = ?",
+            (x_api_key,)
+        )
+        if not cur.fetchone():
+            raise HTTPException(status_code=403, detail="Invalid API Key")
 
 # =============================
 # exec 履歴
@@ -67,24 +96,34 @@ EXEC_HISTORY: list[ExecHistory] = []
 MAX_HISTORY = 100
 
 # =============================
-# Auth
+# API Key 管理
 # =============================
 @app.post("/auth/keys", tags=["Auth"], summary="API Key 発行（root専用）")
 def create_api_key(role: str = "admin", _: None = Depends(verify_root)):
     key = secrets.token_hex(32)
-    API_KEYS[key] = {
-        "role": role,
-        "created": datetime.datetime.now().isoformat()
-    }
+    created = datetime.datetime.now().isoformat()
+
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO api_keys (key, role, created) VALUES (?, ?, ?)",
+            (key, role, created)
+        )
+
     return {"api_key": key, "role": role}
 
 @app.get("/auth/keys", tags=["Auth"], summary="API Key 一覧（root専用）")
 def list_api_keys(_: None = Depends(verify_root)):
-    return API_KEYS
+    with get_db() as conn:
+        cur = conn.execute("SELECT key, role, created FROM api_keys")
+        return [
+            {"api_key": k, "role": r, "created": c}
+            for k, r, c in cur.fetchall()
+        ]
 
 @app.delete("/auth/keys/{key}", tags=["Auth"], summary="API Key 削除（root専用）")
 def delete_api_key(key: str, _: None = Depends(verify_root)):
-    API_KEYS.pop(key, None)
+    with get_db() as conn:
+        conn.execute("DELETE FROM api_keys WHERE key = ?", (key,))
     return {"deleted": key}
 
 # =============================
@@ -105,7 +144,7 @@ async def upload(file: UploadFile = File(...)):
 
     try:
         subprocess.run(["docker", "restart", "mc-server"], check=True)
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
     return {"status": "uploaded", "filename": file.filename}
@@ -129,8 +168,7 @@ def status():
         ["docker", "ps", "-f", "name=mc-server", "--format", "{{.Status}}"],
         capture_output=True, text=True
     )
-    status = result.stdout.strip()
-    return {"status": status if status else "stopped"}
+    return {"status": result.stdout.strip() or "stopped"}
 
 # =============================
 # バックアップ
