@@ -1,8 +1,5 @@
 version: "3.8"
 
-environment:
-  ROOT_API_KEY: super-secret-root-key
-
 services:
   mc-server:
     image: itzg/minecraft-server
@@ -22,6 +19,8 @@ services:
     container_name: mc-api
     ports:
       - "8000:8000"
+    environment:
+      ROOT_API_KEY: super-secret-root-key
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./mc-data:/mc-data
