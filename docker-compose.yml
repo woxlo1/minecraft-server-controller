@@ -1,4 +1,8 @@
 version: "3.8"
+
+environment:
+  ROOT_API_KEY: super-secret-root-key
+
 services:
   mc-server:
     image: itzg/minecraft-server
@@ -7,7 +11,7 @@ services:
       - "25565:25565"
     environment:
       EULA: "TRUE"
-      VERSION: "1.20.4"
+      VERSION: "1.20.1"
       TYPE: "PAPER"
     volumes:
       - ./mc-data:/data

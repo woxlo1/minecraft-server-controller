@@ -3,113 +3,235 @@
 <head>
 <meta charset="UTF-8">
 <title>Minecraft Server Controller</title>
+
 <style>
-  body { font-family: Arial, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; }
-  h1,h2 { text-align: center; }
-  .section { margin: 20px 0; padding: 15px; border: 1px solid #ccc; border-radius: 8px; }
-  button { margin: 5px; padding: 8px 16px; cursor: pointer; }
-  #status, #uploadResult, #backupResult, #logsResult, #cmdOutput { font-weight: bold; white-space: pre-wrap; }
-  textarea { width: 100%; height: 200px; margin-top: 10px; }
-  input[type="text"] { width: 80%; padding: 6px; }
+body {
+  font-family: Arial, sans-serif;
+  max-width: 760px;
+  margin: 40px auto;
+  padding: 20px;
+}
+h1, h2 {
+  text-align: center;
+}
+.section {
+  margin: 20px 0;
+  padding: 15px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+}
+button {
+  margin: 5px;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+input[type="text"] {
+  width: 80%;
+  padding: 6px;
+}
+textarea {
+  width: 100%;
+  height: 200px;
+  margin-top: 10px;
+  white-space: pre-wrap;
+}
+pre {
+  background: #f7f7f7;
+  padding: 10px;
+  border-radius: 6px;
+}
+.status-running {
+  color: green;
+  font-weight: bold;
+}
+.status-stopped {
+  color: red;
+  font-weight: bold;
+}
+.small {
+  font-size: 0.85em;
+  color: #666;
+}
 </style>
 </head>
+
 <body>
 
-<h1>Minecraft Server Controller</h1>
+<h1>🟩 Minecraft Server Controller</h1>
 
-<!-- 1️⃣ Server Control -->
+<!-- API KEY -->
 <div class="section">
-<h2>Server Control</h2>
+<h2>🔐 API Key</h2>
+<input type="text" id="apiKeyInput" placeholder="X-API-Key">
+<button onclick="saveKey()">Save</button>
+<p class="small">※ localStorage に保存されます</p>
+</div>
+
+<!-- Server Control -->
+<div class="section">
+<h2>⚙ Server Control</h2>
 <button onclick="control('start')">Start</button>
 <button onclick="control('stop')">Stop</button>
 <button onclick="getStatus()">Status</button>
 <p id="status">Status: Unknown</p>
 </div>
 
-<!-- 2️⃣ Server Console -->
+<!-- Console -->
 <div class="section">
-<h2>Server Console</h2>
-<input type="text" id="cmdInput" placeholder="コマンドを入力">
+<h2>💻 Server Console</h2>
+<input type="text" id="cmdInput" placeholder="例: say Hello">
 <button onclick="sendCommand()">Send</button>
+<button onclick="loadHistory()">Load History</button>
 <textarea id="cmdOutput" readonly></textarea>
 </div>
 
-<!-- 3️⃣ Upload -->
+<!-- Upload -->
 <div class="section">
-<h2>Upload File / Folder</h2>
+<h2>📦 Upload File / Folder</h2>
 <input type="file" id="fileInput" webkitdirectory directory multiple>
-<button onclick="uploadFile()">Upload</button>
+<button onclick="upload()">Upload</button>
 <p id="uploadResult"></p>
 </div>
 
-<!-- 4️⃣ Backup & Logs -->
+<!-- Backup -->
 <div class="section">
-<h2>Backup & Logs</h2>
-<button onclick="backupServer()">Backup</button>
+<h2>💾 Backup</h2>
+<button onclick="backup()">Create Backup</button>
 <p id="backupResult"></p>
-<button onclick="getLogs()">Show Logs</button>
+</div>
+
+<!-- Logs -->
+<div class="section">
+<h2>📜 Logs</h2>
+<button onclick="getLogs()">Refresh</button>
 <textarea id="logsResult" readonly></textarea>
 </div>
 
+<!-- Metrics -->
+<div class="section">
+<h2>📊 Server Metrics</h2>
+<button onclick="getMetrics()">Load</button>
+<pre id="metricsResult"></pre>
+</div>
+
 <script>
-async function control(action){
-  await fetch(`http://localhost:8000/${action}`, {method:"POST"});
+const API = "http://localhost:8000";
+
+/* ========= API KEY ========= */
+function apiKey() {
+  return localStorage.getItem("apiKey") || "";
+}
+
+function headers() {
+  return { "X-API-Key": apiKey() };
+}
+
+function saveKey() {
+  const key = apiKeyInput.value.trim();
+  if (!key) return alert("API Key を入力してください");
+  localStorage.setItem("apiKey", key);
+  alert("API Key saved");
+}
+
+/* ========= Server ========= */
+async function control(action) {
+  await fetch(`${API}/${action}`, {
+    method: "POST",
+    headers: headers()
+  });
   getStatus();
 }
 
-async function getStatus(){
-  const res = await fetch("http://localhost:8000/status");
-  const data = await res.json();
-  document.getElementById("status").innerText = "Status: "+data.status;
-}
-
-async function uploadFile(){
-  const files = document.getElementById("fileInput").files;
-  if(!files.length) return alert("ファイルまたはフォルダを選択してください");
-  const formData = new FormData();
-  for(const file of files){
-    formData.append("file", file, file.webkitRelativePath || file.name);
+async function getStatus() {
+  try {
+    const res = await fetch(`${API}/status`, { headers: headers() });
+    const data = await res.json();
+    const el = document.getElementById("status");
+    el.innerText = "Status: " + data.status;
+    el.className = data.status.includes("Up")
+      ? "status-running"
+      : "status-stopped";
+  } catch {
+    status.innerText = "Status: API unreachable";
+    status.className = "status-stopped";
   }
-  const res = await fetch("http://localhost:8000/upload", {method:"POST", body: formData});
-  const data = await res.json();
-  const result = document.getElementById("uploadResult");
-  result.innerText = "Files uploaded and server restarted";
-  result.style.color = "green";
 }
 
-async function backupServer(){
-  const res = await fetch("http://localhost:8000/backup", {method:"POST"});
-  const data = await res.json();
-  const result = document.getElementById("backupResult");
-  result.innerText = `Backup created: ${data.backup_file}`;
-  result.style.color = "purple";
-}
+/* ========= Console ========= */
+async function sendCommand() {
+  const cmd = cmdInput.value.trim();
+  if (!cmd) return;
 
-async function getLogs(){
-  const res = await fetch("http://localhost:8000/logs");
-  const data = await res.json();
-  const textarea = document.getElementById("logsResult");
-  textarea.value = data.logs || data.message;
-}
+  const form = new FormData();
+  form.append("command", cmd);
 
-async function sendCommand(){
-  const commandInput = document.getElementById("cmdInput");
-  const command = commandInput.value.trim();
-  if(!command) return alert("コマンドを入力してください");
-
-  const res = await fetch("http://localhost:8000/exec", {
+  const res = await fetch(`${API}/exec`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command: command })
+    headers: headers(),
+    body: form
   });
 
   const data = await res.json();
-  const textarea = document.getElementById("cmdOutput");
-  textarea.value += `> ${data.command}\n${data.output}\n\n`;
-  textarea.scrollTop = textarea.scrollHeight;
-  commandInput.value = "";
+  cmdOutput.value += `> ${data.command}\n${data.output}\n\n`;
+  cmdOutput.scrollTop = cmdOutput.scrollHeight;
+  cmdInput.value = "";
 }
 
+async function loadHistory() {
+  const res = await fetch(`${API}/exec/history`, { headers: headers() });
+  const list = await res.json();
+  cmdOutput.value = "";
+  list.forEach(e => {
+    cmdOutput.value += `[${e.time}]\n> ${e.command}\n${e.output}\n\n`;
+  });
+}
+
+/* ========= Upload ========= */
+async function upload() {
+  const files = fileInput.files;
+  if (!files.length) return alert("ファイル or フォルダを選択してください");
+
+  for (const file of files) {
+    const form = new FormData();
+    form.append("file", file, file.webkitRelativePath || file.name);
+    await fetch(`${API}/upload`, {
+      method: "POST",
+      headers: headers(),
+      body: form
+    });
+  }
+
+  uploadResult.innerText = "Upload completed & server restarted";
+  uploadResult.style.color = "green";
+}
+
+/* ========= Backup ========= */
+async function backup() {
+  const res = await fetch(`${API}/backup`, {
+    method: "POST",
+    headers: headers()
+  });
+  const data = await res.json();
+  backupResult.innerText = data.backup;
+}
+
+/* ========= Logs ========= */
+async function getLogs() {
+  const res = await fetch(`${API}/logs`, { headers: headers() });
+  const data = await res.json();
+  logsResult.value = data.logs || "";
+  logsResult.scrollTop = logsResult.scrollHeight;
+}
+
+/* ========= Metrics ========= */
+async function getMetrics() {
+  const res = await fetch(`${API}/metrics`, { headers: headers() });
+  metricsResult.textContent = JSON.stringify(await res.json(), null, 2);
+}
+
+/* ========= Init ========= */
+apiKeyInput.value = apiKey();
+getStatus();
 </script>
 
 </body>

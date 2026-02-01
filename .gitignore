@@ -1,0 +1,19 @@
+# Minecraft server data
+mc-data/
+backups/
+
+# Docker volumes
+*.log
+
+# Python
+__pycache__/
+*.pyc
+
+# Environment
+.env
+
+# OS
+.DS_Store
+Thumbs.db
+git status
+
