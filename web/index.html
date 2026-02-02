@@ -176,9 +176,30 @@ table th {
 
 <!-- Backup -->
 <div class="section">
-<h2>💾 Backup</h2>
-<button onclick="backup()">Create Backup</button>
+<h2>💾 Backup Management</h2>
+
+<!-- 手動バックアップ -->
+<h3>手動バックアップ</h3>
+<button onclick="backup()">Create Backup Now</button>
 <p id="backupResult"></p>
+
+<!-- バックアップ一覧 -->
+<h3>バックアップ一覧</h3>
+<button onclick="loadBackups()">Refresh</button>
+<div id="backupsList"></div>
+
+<!-- 自動バックアップスケジュール -->
+<h3>自動バックアップスケジュール（管理者専用）</h3>
+<p class="small">※ cron形式: "分 時 日 月 曜日" (例: "0 2 * * *" = 毎日2時)</p>
+<input type="text" id="scheduleName" placeholder="スケジュール名 (例: daily)">
+<input type="text" id="cronExpression" placeholder="cron式 (例: 0 2 * * *)">
+<input type="number" id="maxBackups" placeholder="保持世代数" value="7" min="1">
+<button onclick="createSchedule()" class="btn-success">スケジュール作成</button>
+<p id="scheduleResult"></p>
+
+<h3>スケジュール一覧</h3>
+<button onclick="loadSchedules()">Refresh</button>
+<div id="schedulesList"></div>
 </div>
 
 <!-- Logs -->
@@ -241,6 +262,12 @@ const cmdOutput = document.getElementById("cmdOutput");
 const fileInput = document.getElementById("fileInput");
 const uploadResult = document.getElementById("uploadResult");
 const backupResult = document.getElementById("backupResult");
+const backupsList = document.getElementById("backupsList");
+const scheduleName = document.getElementById("scheduleName");
+const cronExpression = document.getElementById("cronExpression");
+const maxBackups = document.getElementById("maxBackups");
+const scheduleResult = document.getElementById("scheduleResult");
+const schedulesList = document.getElementById("schedulesList");
 const logsResult = document.getElementById("logsResult");
 const metricsResult = document.getElementById("metricsResult");
 const auditResult = document.getElementById("auditResult");
@@ -652,7 +679,248 @@ async function upload(){
 async function backup(){
   const res = await fetch(`${API}/backup`,{method:"POST", headers:headers()});
   const data = await res.json();
-  backupResult.innerText = data.backup;
+  backupResult.innerHTML = `バックアップ作成完了<br>ファイル: ${data.backup}<br>サイズ: ${data.size_mb} MB`;
+  backupResult.style.color = "green";
+  loadBackups();
+}
+
+async function loadBackups() {
+  try {
+    const res = await fetch(`${API}/backups`, { headers: headers() });
+    if (!res.ok) throw new Error("バックアップ一覧取得失敗");
+    
+    const data = await res.json();
+    
+    if (data.backups.length === 0) {
+      backupsList.innerHTML = "<p>バックアップファイルがありません</p>";
+    } else {
+      let html = `<h4>バックアップファイル (${data.count}個):</h4><table>
+        <tr>
+          <th>ファイル名</th>
+          <th>サイズ (MB)</th>
+          <th>作成日時</th>
+          <th>操作</th>
+        </tr>`;
+      
+      data.backups.forEach(b => {
+        html += `<tr>
+          <td>${b.name}</td>
+          <td>${b.size_mb}</td>
+          <td>${new Date(b.created).toLocaleString()}</td>
+          <td>
+            <button class="btn-success" onclick="restoreBackup('${b.name}')">復元</button>
+            <button class="btn-danger" onclick="deleteBackup('${b.name}')">削除</button>
+          </td>
+        </tr>`;
+      });
+      
+      html += "</table>";
+      backupsList.innerHTML = html;
+    }
+  } catch (err) {
+    backupsList.innerHTML = `<p style="color:red">${err.message}</p>`;
+  }
+}
+
+async function restoreBackup(filename) {
+  if (!confirm(`${filename} からリストアしますか？\n\n※ サーバーが停止し、現在のデータは pre_restore としてバックアップされます`)) {
+    return;
+  }
+  
+  try {
+    backupResult.innerText = "リストア中... (サーバーを停止しています)";
+    backupResult.style.color = "orange";
+    
+    const res = await fetch(`${API}/backups/restore/${filename}`, {
+      method: "POST",
+      headers: headers()
+    });
+    
+    if (!res.ok) {
+      throw new Error("リストア失敗: 管理者権限が必要です");
+    }
+    
+    const data = await res.json();
+    backupResult.innerHTML = `
+      <strong>リストア完了</strong><br>
+      復元元: ${data.backup}<br>
+      現データのバックアップ: ${data.pre_restore_backup}<br>
+      <small>※ サーバーが再起動されました</small>
+    `;
+    backupResult.style.color = "green";
+  } catch (err) {
+    backupResult.innerText = err.message;
+    backupResult.style.color = "red";
+  }
+}
+
+async function deleteBackup(filename) {
+  if (!confirm(`${filename} を削除しますか？`)) return;
+  
+  try {
+    const res = await fetch(`${API}/backups/${filename}`, {
+      method: "DELETE",
+      headers: headers()
+    });
+    
+    if (!res.ok) {
+      throw new Error("削除失敗: 管理者権限が必要です");
+    }
+    
+    backupResult.innerText = `${filename} を削除しました`;
+    backupResult.style.color = "green";
+    loadBackups();
+  } catch (err) {
+    backupResult.innerText = err.message;
+    backupResult.style.color = "red";
+  }
+}
+
+// ========= Backup Schedules =========
+async function createSchedule() {
+  const name = scheduleName.value.trim();
+  const cron = cronExpression.value.trim();
+  const max = parseInt(maxBackups.value);
+  
+  if (!name || !cron) {
+    alert("スケジュール名とcron式を入力してください");
+    return;
+  }
+  
+  try {
+    const res = await fetch(`${API}/backup/schedules`, {
+      method: "POST",
+      headers: {
+        ...headers(),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        name: name,
+        cron_expression: cron,
+        max_backups: max
+      })
+    });
+    
+    if (!res.ok) {
+      throw new Error("スケジュール作成失敗: 管理者権限が必要です");
+    }
+    
+    const data = await res.json();
+    scheduleResult.innerHTML = `
+      <strong>スケジュール作成完了</strong><br>
+      名前: ${data.name}<br>
+      cron: ${data.cron_expression}<br>
+      保持世代: ${data.max_backups}
+    `;
+    scheduleResult.style.color = "green";
+    
+    // 入力をクリア
+    scheduleName.value = "";
+    cronExpression.value = "";
+    
+    loadSchedules();
+  } catch (err) {
+    scheduleResult.innerText = err.message;
+    scheduleResult.style.color = "red";
+  }
+}
+
+async function loadSchedules() {
+  try {
+    const res = await fetch(`${API}/backup/schedules`, { headers: headers() });
+    if (!res.ok) throw new Error("スケジュール一覧取得失敗");
+    
+    const schedules = await res.json();
+    
+    if (schedules.length === 0) {
+      schedulesList.innerHTML = "<p>スケジュールが登録されていません</p>";
+    } else {
+      let html = `<h4>登録済みスケジュール (${schedules.length}個):</h4><table>
+        <tr>
+          <th>名前</th>
+          <th>cron式</th>
+          <th>保持世代</th>
+          <th>状態</th>
+          <th>最終実行</th>
+          <th>操作</th>
+        </tr>`;
+      
+      schedules.forEach(s => {
+        const statusText = s.enabled ? "有効" : "無効";
+        const statusColor = s.enabled ? "green" : "gray";
+        const toggleText = s.enabled ? "無効化" : "有効化";
+        const lastRun = s.last_run ? new Date(s.last_run).toLocaleString() : "未実行";
+        
+        html += `<tr>
+          <td>${s.name}</td>
+          <td>${s.cron_expression}</td>
+          <td>${s.max_backups}世代</td>
+          <td style="color:${statusColor};font-weight:bold">${statusText}</td>
+          <td>${lastRun}</td>
+          <td>
+            <button onclick="toggleSchedule(${s.id})">${toggleText}</button>
+            <button class="btn-danger" onclick="deleteSchedule(${s.id})">削除</button>
+          </td>
+        </tr>`;
+      });
+      
+      html += "</table>";
+      
+      // cron式のヘルプ
+      html += `
+        <div class="small" style="margin-top:10px">
+          <strong>cron式の例:</strong><br>
+          ・ 0 2 * * * → 毎日2時<br>
+          ・ 0 */6 * * * → 6時間ごと<br>
+          ・ 0 0 * * 0 → 毎週日曜0時<br>
+          ・ 0 0 1 * * → 毎月1日0時
+        </div>
+      `;
+      
+      schedulesList.innerHTML = html;
+    }
+  } catch (err) {
+    schedulesList.innerHTML = `<p style="color:red">${err.message}</p>`;
+  }
+}
+
+async function toggleSchedule(id) {
+  try {
+    const res = await fetch(`${API}/backup/schedules/${id}/toggle`, {
+      method: "PATCH",
+      headers: headers()
+    });
+    
+    if (!res.ok) {
+      throw new Error("切り替え失敗: 管理者権限が必要です");
+    }
+    
+    loadSchedules();
+  } catch (err) {
+    alert(err.message);
+  }
+}
+
+async function deleteSchedule(id) {
+  if (!confirm("このスケジュールを削除しますか？")) return;
+  
+  try {
+    const res = await fetch(`${API}/backup/schedules/${id}`, {
+      method: "DELETE",
+      headers: headers()
+    });
+    
+    if (!res.ok) {
+      throw new Error("削除失敗: 管理者権限が必要です");
+    }
+    
+    scheduleResult.innerText = "スケジュールを削除しました";
+    scheduleResult.style.color = "green";
+    loadSchedules();
+  } catch (err) {
+    scheduleResult.innerText = err.message;
+    scheduleResult.style.color = "red";
+  }
 }
 
 // ========= Logs =========
@@ -702,6 +970,10 @@ setInterval(()=>{ if(apiKey()) loadPlayers(); },5000);
 apiKeyInput.value = apiKey();
 getStatus();
 loadMyInfo();
+if (apiKey()) {
+  loadBackups();
+  loadSchedules();
+}
 </script>
 
 </body>

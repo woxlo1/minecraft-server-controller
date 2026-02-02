@@ -9,6 +9,10 @@ import datetime
 import psutil
 import secrets
 import sqlite3
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
+import glob
+import time
 
 # =============================
 # 設定
@@ -52,6 +56,17 @@ def init_db():
             ip TEXT
         )
         """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS backup_schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            cron_expression TEXT NOT NULL,
+            enabled INTEGER DEFAULT 1,
+            max_backups INTEGER DEFAULT 7,
+            created TEXT NOT NULL,
+            last_run TEXT
+        )
+        """)
 
 # =============================
 # FastAPI
@@ -59,12 +74,110 @@ def init_db():
 app = FastAPI(
     title="Minecraft Server Control API",
     description="Minecraft サーバー管理用 Web API",
-    version="4.0.0"
+    version="4.1.0"
 )
+
+# =============================
+# Scheduler
+# =============================
+scheduler = BackgroundScheduler()
+
+def auto_backup(schedule_id: int):
+    """
+    自動バックアップを実行
+    """
+    try:
+        with get_db() as conn:
+            cur = conn.execute(
+                "SELECT name, max_backups FROM backup_schedules WHERE id = ?",
+                (schedule_id,)
+            )
+            row = cur.fetchone()
+            if not row:
+                return
+            
+            schedule_name, max_backups = row
+        
+        # バックアップ作成
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_file = os.path.join(BACKUP_DIR, f"{schedule_name}_{ts}.zip")
+        
+        with zipfile.ZipFile(backup_file, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for root, _, files in os.walk(MC_DATA_DIR):
+                for f in files:
+                    full = os.path.join(root, f)
+                    zipf.write(full, os.path.relpath(full, MC_DATA_DIR))
+        
+        # 最終実行時刻を更新
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE backup_schedules SET last_run = ? WHERE id = ?",
+                (datetime.datetime.now().isoformat(), schedule_id)
+            )
+        
+        # 古いバックアップを削除（世代管理）
+        cleanup_old_backups(schedule_name, max_backups)
+        
+        print(f"Auto backup created: {backup_file}")
+    except Exception as e:
+        print(f"Auto backup failed: {e}")
+
+def cleanup_old_backups(schedule_name: str, max_backups: int):
+    """
+    古いバックアップファイルを削除
+    """
+    pattern = os.path.join(BACKUP_DIR, f"{schedule_name}_*.zip")
+    backups = sorted(glob.glob(pattern), key=os.path.getmtime, reverse=True)
+    
+    # max_backups を超えた古いバックアップを削除
+    for old_backup in backups[max_backups:]:
+        try:
+            os.remove(old_backup)
+            print(f"Deleted old backup: {old_backup}")
+        except Exception as e:
+            print(f"Failed to delete {old_backup}: {e}")
+
+def load_schedules():
+    """
+    DB からスケジュールを読み込んでスケジューラーに登録
+    """
+    with get_db() as conn:
+        cur = conn.execute(
+            "SELECT id, name, cron_expression FROM backup_schedules WHERE enabled = 1"
+        )
+        for schedule_id, name, cron_expr in cur.fetchall():
+            try:
+                # cron式をパース (例: "0 2 * * *" = 毎日2時)
+                parts = cron_expr.split()
+                if len(parts) == 5:
+                    minute, hour, day, month, day_of_week = parts
+                    
+                    scheduler.add_job(
+                        auto_backup,
+                        CronTrigger(
+                            minute=minute,
+                            hour=hour,
+                            day=day,
+                            month=month,
+                            day_of_week=day_of_week
+                        ),
+                        args=[schedule_id],
+                        id=f"backup_{schedule_id}",
+                        replace_existing=True
+                    )
+                    print(f"Loaded schedule: {name} ({cron_expr})")
+            except Exception as e:
+                print(f"Failed to load schedule {name}: {e}")
 
 @app.on_event("startup")
 def startup():
     init_db()
+    load_schedules()
+    scheduler.start()
+
+@app.on_event("shutdown")
+def shutdown():
+    scheduler.shutdown()
 
 # =============================
 # CORS
@@ -438,8 +551,11 @@ def status(user=Depends(verify_api_key)):
 # =============================
 @app.post("/backup", tags=["Backup"])
 def backup(user=Depends(verify_api_key)):
+    """
+    手動バックアップを作成
+    """
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-    backup_file = os.path.join(BACKUP_DIR, f"mc_backup_{ts}.zip")
+    backup_file = os.path.join(BACKUP_DIR, f"manual_{ts}.zip")
 
     with zipfile.ZipFile(backup_file, "w", zipfile.ZIP_DEFLATED) as zipf:
         for root, _, files in os.walk(MC_DATA_DIR):
@@ -448,7 +564,211 @@ def backup(user=Depends(verify_api_key)):
                 zipf.write(full, os.path.relpath(full, MC_DATA_DIR))
 
     log_action(user, "backup", backup_file)
-    return {"backup": backup_file}
+    return {"backup": backup_file, "size_mb": round(os.path.getsize(backup_file) / (1024*1024), 2)}
+
+@app.get("/backups", tags=["Backup"])
+def list_backups(user=Depends(verify_api_key)):
+    """
+    バックアップファイル一覧を取得
+    """
+    if not os.path.exists(BACKUP_DIR):
+        return {"backups": []}
+    
+    backups = []
+    for filename in os.listdir(BACKUP_DIR):
+        if filename.endswith(".zip"):
+            filepath = os.path.join(BACKUP_DIR, filename)
+            backups.append({
+                "name": filename,
+                "size_mb": round(os.path.getsize(filepath) / (1024*1024), 2),
+                "created": datetime.datetime.fromtimestamp(os.path.getmtime(filepath)).isoformat()
+            })
+    
+    # 作成日時の降順でソート
+    backups.sort(key=lambda x: x["created"], reverse=True)
+    
+    log_action(user, "list_backups")
+    return {"backups": backups, "count": len(backups)}
+
+@app.post("/backups/restore/{filename}", tags=["Backup"])
+def restore_backup(filename: str, user=Depends(verify_api_key)):
+    """
+    バックアップからリストア
+    """
+    if user["role"] not in ["root", "admin"]:
+        raise HTTPException(status_code=403, detail="Admin role required")
+    
+    filepath = os.path.join(BACKUP_DIR, filename)
+    
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Backup not found")
+    
+    if not filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Invalid backup file")
+    
+    # サーバーを停止
+    subprocess.run(["docker", "stop", "mc-server"])
+    
+    # 現在のデータをバックアップ（念のため）
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    pre_restore_backup = os.path.join(BACKUP_DIR, f"pre_restore_{ts}.zip")
+    
+    with zipfile.ZipFile(pre_restore_backup, "w", zipfile.ZIP_DEFLATED) as zipf:
+        for root, _, files in os.walk(MC_DATA_DIR):
+            for f in files:
+                full = os.path.join(root, f)
+                zipf.write(full, os.path.relpath(full, MC_DATA_DIR))
+    
+    # 既存データを削除
+    for item in os.listdir(MC_DATA_DIR):
+        item_path = os.path.join(MC_DATA_DIR, item)
+        if os.path.isfile(item_path):
+            os.remove(item_path)
+        elif os.path.isdir(item_path):
+            shutil.rmtree(item_path)
+    
+    # バックアップを展開
+    with zipfile.ZipFile(filepath, "r") as zipf:
+        zipf.extractall(MC_DATA_DIR)
+    
+    # サーバーを起動
+    subprocess.run(["docker", "start", "mc-server"])
+    
+    log_action(user, "restore_backup", filename)
+    return {
+        "status": "restored",
+        "backup": filename,
+        "pre_restore_backup": pre_restore_backup
+    }
+
+@app.delete("/backups/{filename}", tags=["Backup"])
+def delete_backup(filename: str, user=Depends(verify_api_key)):
+    """
+    バックアップファイルを削除
+    """
+    if user["role"] not in ["root", "admin"]:
+        raise HTTPException(status_code=403, detail="Admin role required")
+    
+    filepath = os.path.join(BACKUP_DIR, filename)
+    
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="Backup not found")
+    
+    if not filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Invalid file")
+    
+    os.remove(filepath)
+    log_action(user, "delete_backup", filename)
+    
+    return {"status": "deleted", "backup": filename}
+
+# =============================
+# Backup Schedules
+# =============================
+class CreateScheduleRequest(BaseModel):
+    name: str
+    cron_expression: str
+    max_backups: int = 7
+
+@app.post("/backup/schedules", tags=["Backup"])
+def create_schedule(req: CreateScheduleRequest, user=Depends(verify_api_key)):
+    """
+    自動バックアップスケジュールを作成
+    cron_expression: "分 時 日 月 曜日" (例: "0 2 * * *" = 毎日2時)
+    """
+    if user["role"] not in ["root", "admin"]:
+        raise HTTPException(status_code=403, detail="Admin role required")
+    
+    # cron式の検証
+    parts = req.cron_expression.split()
+    if len(parts) != 5:
+        raise HTTPException(status_code=400, detail="Invalid cron expression (should be 5 parts)")
+    
+    with get_db() as conn:
+        cur = conn.execute(
+            "INSERT INTO backup_schedules (name, cron_expression, max_backups, created) VALUES (?, ?, ?, ?)",
+            (req.name, req.cron_expression, req.max_backups, datetime.datetime.now().isoformat())
+        )
+        schedule_id = cur.lastrowid
+    
+    # スケジューラーに登録
+    load_schedules()
+    
+    log_action(user, "create_backup_schedule", f"{req.name} ({req.cron_expression})")
+    return {
+        "id": schedule_id,
+        "name": req.name,
+        "cron_expression": req.cron_expression,
+        "max_backups": req.max_backups
+    }
+
+@app.get("/backup/schedules", tags=["Backup"])
+def list_schedules(user=Depends(verify_api_key)):
+    """
+    バックアップスケジュール一覧
+    """
+    with get_db() as conn:
+        cur = conn.execute("""
+            SELECT id, name, cron_expression, enabled, max_backups, created, last_run
+            FROM backup_schedules
+            ORDER BY id DESC
+        """)
+        return [
+            {
+                "id": id,
+                "name": name,
+                "cron_expression": cron_expr,
+                "enabled": bool(enabled),
+                "max_backups": max_backups,
+                "created": created,
+                "last_run": last_run
+            }
+            for id, name, cron_expr, enabled, max_backups, created, last_run in cur.fetchall()
+        ]
+
+@app.patch("/backup/schedules/{schedule_id}/toggle", tags=["Backup"])
+def toggle_schedule(schedule_id: int, user=Depends(verify_api_key)):
+    """
+    スケジュールの有効/無効を切り替え
+    """
+    if user["role"] not in ["root", "admin"]:
+        raise HTTPException(status_code=403, detail="Admin role required")
+    
+    with get_db() as conn:
+        cur = conn.execute("SELECT enabled FROM backup_schedules WHERE id = ?", (schedule_id,))
+        row = cur.fetchone()
+        
+        if not row:
+            raise HTTPException(status_code=404, detail="Schedule not found")
+        
+        new_enabled = 0 if row[0] else 1
+        conn.execute("UPDATE backup_schedules SET enabled = ? WHERE id = ?", (new_enabled, schedule_id))
+    
+    # スケジューラーを再読み込み
+    load_schedules()
+    
+    log_action(user, "toggle_backup_schedule", f"schedule_id={schedule_id}, enabled={new_enabled}")
+    return {"id": schedule_id, "enabled": bool(new_enabled)}
+
+@app.delete("/backup/schedules/{schedule_id}", tags=["Backup"])
+def delete_schedule(schedule_id: int, user=Depends(verify_api_key)):
+    """
+    バックアップスケジュールを削除
+    """
+    if user["role"] not in ["root", "admin"]:
+        raise HTTPException(status_code=403, detail="Admin role required")
+    
+    with get_db() as conn:
+        conn.execute("DELETE FROM backup_schedules WHERE id = ?", (schedule_id,))
+    
+    # スケジューラーから削除
+    try:
+        scheduler.remove_job(f"backup_{schedule_id}")
+    except:
+        pass
+    
+    log_action(user, "delete_backup_schedule", f"schedule_id={schedule_id}")
+    return {"status": "deleted", "id": schedule_id}
 
 # =============================
 # Logs
