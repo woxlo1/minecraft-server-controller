@@ -1,6 +1,7 @@
 # Minecraft server data
 mc-data/
 backups/
+data/
 
 # Docker volumes
 *.log

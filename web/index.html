@@ -7,7 +7,7 @@
 <style>
 body {
   font-family: Arial, sans-serif;
-  max-width: 820px;
+  max-width: 1000px;
   margin: 40px auto;
   padding: 20px;
 }
@@ -25,9 +25,10 @@ button {
   padding: 8px 16px;
   cursor: pointer;
 }
-input[type="text"] {
+input[type="text"], select {
   width: 80%;
   padding: 6px;
+  margin: 5px 0;
 }
 textarea {
   width: 100%;
@@ -54,19 +55,60 @@ pre {
   font-size: 0.85em;
   color: #666;
 }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+}
+table th, table td {
+  border: 1px solid #ddd;
+  padding: 8px;
+  text-align: left;
+}
+table th {
+  background-color: #f2f2f2;
+}
+.btn-danger {
+  background-color: #dc3545;
+  color: white;
+  border: none;
+}
+.btn-success {
+  background-color: #28a745;
+  color: white;
+  border: none;
+}
+.hidden {
+  display: none;
+}
 </style>
 </head>
 
 <body>
 
-<h1>🟩 Minecraft Server Controller</h1>
+<h1>🟩 Minecraft Server Controller v4.0</h1>
+
+<!-- プレイヤー名登録 -->
+<div class="section" id="playerRegisterSection">
+<h2>👤 プレイヤー登録</h2>
+<p>初めての方：プレイヤー名を入力してAPIキーを取得してください</p>
+<input type="text" id="playerNameInput" placeholder="Minecraftプレイヤー名">
+<select id="roleSelect">
+  <option value="player">Player（一般ユーザー）</option>
+  <option value="admin">Admin（管理者）</option>
+</select>
+<button onclick="registerPlayer()" class="btn-success">登録してAPIキー取得</button>
+<p id="registerResult"></p>
+</div>
 
 <!-- API KEY -->
 <div class="section">
-<h2>🔐 API Key</h2>
+<h2>🔑 API Key</h2>
 <input type="text" id="apiKeyInput" placeholder="X-API-Key">
-<button onclick="saveKey()">Save</button>
-<p class="small">※ localStorage に保存されます</p>
+<button onclick="saveKey()">保存</button>
+<button onclick="loadMyInfo()">自分の情報を確認</button>
+<p class="small">※ localStorageに保存されます</p>
+<div id="myInfo"></div>
 </div>
 
 <!-- Server Control -->
@@ -76,6 +118,43 @@ pre {
 <button onclick="control('stop')">Stop</button>
 <button onclick="getStatus()">Status</button>
 <p id="status">Status: Unknown</p>
+</div>
+
+<!-- Whitelist 管理 -->
+<div class="section">
+<h2>📋 Whitelist 管理</h2>
+<input type="text" id="whitelistPlayerInput" placeholder="プレイヤー名">
+<button onclick="whitelistAdd()" class="btn-success">追加</button>
+<button onclick="whitelistRemove()" class="btn-danger">削除</button>
+<button onclick="whitelistEnable()" class="btn-success">有効化</button>
+<button onclick="whitelistDisable()" class="btn-danger">無効化</button>
+<button onclick="loadWhitelist()">リスト表示</button>
+<p id="whitelistResult"></p>
+<div id="whitelistList"></div>
+</div>
+
+<!-- Operator 管理 -->
+<div class="section">
+<h2>👑 Operator 管理</h2>
+<p class="small">※ 管理者権限が必要です</p>
+<input type="text" id="opPlayerInput" placeholder="プレイヤー名">
+<button onclick="opAdd()" class="btn-success">OP付与</button>
+<button onclick="opRemove()" class="btn-danger">OP削除</button>
+<p id="opResult"></p>
+</div>
+
+<!-- プラグイン管理 -->
+<div class="section">
+<h2>🔌 プラグイン管理（PAPER/SPIGOT用）</h2>
+<p class="small">※ 管理者権限が必要です</p>
+<button onclick="loadPlugins()">プラグイン一覧</button>
+<button onclick="reloadPlugins()">プラグインリロード</button>
+<div id="pluginsList"></div>
+<hr>
+<h3>プラグインアップロード</h3>
+<input type="file" id="pluginFileInput" accept=".jar">
+<button onclick="uploadPlugin()" class="btn-success">アップロード</button>
+<p id="pluginResult"></p>
 </div>
 
 <!-- Console -->
@@ -116,6 +195,13 @@ pre {
 <pre id="metricsResult"></pre>
 </div>
 
+<!-- API Keys 管理（Root用） -->
+<div class="section" id="apiKeysSection">
+<h2>🔐 API Keys 管理（Root専用）</h2>
+<button onclick="loadApiKeys()">APIキー一覧を表示</button>
+<div id="apiKeysList"></div>
+</div>
+
 <!-- Audit Logs -->
 <div class="section">
 <h2>🕵 操作ログ（Audit Logs）</h2>
@@ -134,45 +220,22 @@ pre {
 </div>
 
 <script>
-/* ========= Players ========= */
-async function loadPlayers() {
-  const res = await fetch(`${API}/players`, { headers: headers() });
-  if (!res.ok) {
-    alert("プレイヤー情報取得失敗");
-    return;
-  }
-  const data = await res.json();
-  const select = document.getElementById("playerSelect");
-  select.innerHTML = '<option value="">-- プレイヤーを選択 --</option>';
-  data.players.forEach(p => {
-    const opt = document.createElement("option");
-    opt.value = p;
-    opt.innerText = p;
-    select.appendChild(opt);
-  });
-  document.getElementById("playerDetail").textContent = `オンラインプレイヤー: ${data.count}`;
-}
-
-async function showPlayerDetail() {
-  const name = document.getElementById("playerSelect").value;
-  if (!name) {
-    document.getElementById("playerDetail").textContent = "";
-    return;
-  }
-  const res = await fetch(`${API}/players/${name}`, { headers: headers() });
-  if (!res.ok) {
-    document.getElementById("playerDetail").textContent = "詳細取得失敗（プレイヤーがオフラインかも）";
-    return;
-  }
-  const data = await res.json();
-  document.getElementById("playerDetail").textContent = JSON.stringify(data.raw_nbt, null, 2);
-}
-
 const API = "http://localhost:8000";
-
 
 // DOM Elements
 const apiKeyInput = document.getElementById("apiKeyInput");
+const playerNameInput = document.getElementById("playerNameInput");
+const roleSelect = document.getElementById("roleSelect");
+const registerResult = document.getElementById("registerResult");
+const myInfo = document.getElementById("myInfo");
+const whitelistPlayerInput = document.getElementById("whitelistPlayerInput");
+const whitelistResult = document.getElementById("whitelistResult");
+const whitelistList = document.getElementById("whitelistList");
+const opPlayerInput = document.getElementById("opPlayerInput");
+const opResult = document.getElementById("opResult");
+const pluginFileInput = document.getElementById("pluginFileInput");
+const pluginsList = document.getElementById("pluginsList");
+const pluginResult = document.getElementById("pluginResult");
 const cmdInput = document.getElementById("cmdInput");
 const cmdOutput = document.getElementById("cmdOutput");
 const fileInput = document.getElementById("fileInput");
@@ -184,6 +247,7 @@ const auditResult = document.getElementById("auditResult");
 const statusEl = document.getElementById("status");
 const playerSelect = document.getElementById("playerSelect");
 const playerDetail = document.getElementById("playerDetail");
+const apiKeysList = document.getElementById("apiKeysList");
 
 // ========= API Key =========
 function apiKey() { return localStorage.getItem("apiKey")||""; }
@@ -193,6 +257,346 @@ function saveKey() {
   if(!key) return alert("API Key を入力してください");
   localStorage.setItem("apiKey", key);
   alert("API Key saved");
+  loadMyInfo();
+}
+
+// ========= プレイヤー登録 =========
+async function registerPlayer() {
+  const playerName = playerNameInput.value.trim();
+  const role = roleSelect.value;
+  
+  if (!playerName) {
+    alert("プレイヤー名を入力してください");
+    return;
+  }
+  
+  // Root API Keyが必要
+  const rootKey = prompt("Root API Keyを入力してください:");
+  if (!rootKey) return;
+  
+  try {
+    const res = await fetch(`${API}/auth/keys`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": rootKey
+      },
+      body: JSON.stringify({
+        player_name: playerName,
+        role: role
+      })
+    });
+    
+    if (!res.ok) {
+      throw new Error("API Key作成失敗: Root権限が必要です");
+    }
+    
+    const data = await res.json();
+    registerResult.innerHTML = `
+      <strong>登録完了！</strong><br>
+      プレイヤー名: ${data.player_name}<br>
+      Role: ${data.role}<br>
+      API Key: <code>${data.api_key}</code><br>
+      <small>※ このAPIキーを保存してください（再表示できません）</small>
+    `;
+    registerResult.style.color = "green";
+    
+    // 自動で入力
+    apiKeyInput.value = data.api_key;
+  } catch (err) {
+    registerResult.innerText = err.message;
+    registerResult.style.color = "red";
+  }
+}
+
+// ========= 自分の情報確認 =========
+async function loadMyInfo() {
+  if (!apiKey()) {
+    myInfo.innerText = "";
+    return;
+  }
+  
+  try {
+    const res = await fetch(`${API}/auth/keys/my`, { headers: headers() });
+    if (!res.ok) throw new Error("認証失敗");
+    
+    const data = await res.json();
+    myInfo.innerHTML = `
+      <strong>ログイン中:</strong><br>
+      プレイヤー名: ${data.player_name || "管理者"}<br>
+      Role: ${data.role}
+    `;
+  } catch (err) {
+    myInfo.innerText = "認証に失敗しました";
+  }
+}
+
+// ========= Whitelist =========
+async function whitelistAdd() {
+  const player = whitelistPlayerInput.value.trim();
+  if (!player) return alert("プレイヤー名を入力してください");
+  
+  const res = await fetch(`${API}/whitelist/add/${player}`, {
+    method: "POST",
+    headers: headers()
+  });
+  const data = await res.json();
+  whitelistResult.innerText = data.output;
+  loadWhitelist();
+}
+
+async function whitelistRemove() {
+  const player = whitelistPlayerInput.value.trim();
+  if (!player) return alert("プレイヤー名を入力してください");
+  
+  const res = await fetch(`${API}/whitelist/remove/${player}`, {
+    method: "POST",
+    headers: headers()
+  });
+  const data = await res.json();
+  whitelistResult.innerText = data.output;
+  loadWhitelist();
+}
+
+async function whitelistEnable() {
+  const res = await fetch(`${API}/whitelist/enable`, {
+    method: "POST",
+    headers: headers()
+  });
+  const data = await res.json();
+  whitelistResult.innerText = data.output;
+}
+
+async function whitelistDisable() {
+  const res = await fetch(`${API}/whitelist/disable`, {
+    method: "POST",
+    headers: headers()
+  });
+  const data = await res.json();
+  whitelistResult.innerText = data.output;
+}
+
+async function loadWhitelist() {
+  const res = await fetch(`${API}/whitelist`, { headers: headers() });
+  const data = await res.json();
+  
+  if (data.players.length === 0) {
+    whitelistList.innerHTML = "<p>ホワイトリストは空です</p>";
+  } else {
+    whitelistList.innerHTML = `
+      <h3>登録済みプレイヤー:</h3>
+      <ul>
+        ${data.players.map(p => `<li>${p}</li>`).join('')}
+      </ul>
+    `;
+  }
+}
+
+// ========= Operator =========
+async function opAdd() {
+  const player = opPlayerInput.value.trim();
+  if (!player) return alert("プレイヤー名を入力してください");
+  
+  try {
+    const res = await fetch(`${API}/op/add/${player}`, {
+      method: "POST",
+      headers: headers()
+    });
+    
+    if (!res.ok) {
+      throw new Error("OP付与失敗: 管理者権限が必要です");
+    }
+    
+    const data = await res.json();
+    opResult.innerText = data.output;
+    opResult.style.color = "green";
+  } catch (err) {
+    opResult.innerText = err.message;
+    opResult.style.color = "red";
+  }
+}
+
+async function opRemove() {
+  const player = opPlayerInput.value.trim();
+  if (!player) return alert("プレイヤー名を入力してください");
+  
+  try {
+    const res = await fetch(`${API}/op/remove/${player}`, {
+      method: "POST",
+      headers: headers()
+    });
+    
+    if (!res.ok) {
+      throw new Error("OP削除失敗: 管理者権限が必要です");
+    }
+    
+    const data = await res.json();
+    opResult.innerText = data.output;
+    opResult.style.color = "green";
+  } catch (err) {
+    opResult.innerText = err.message;
+    opResult.style.color = "red";
+  }
+}
+
+// ========= プラグイン管理 =========
+async function loadPlugins() {
+  try {
+    const res = await fetch(`${API}/plugins`, { headers: headers() });
+    if (!res.ok) throw new Error("プラグイン一覧取得失敗");
+    
+    const data = await res.json();
+    
+    if (data.plugins.length === 0) {
+      pluginsList.innerHTML = "<p>プラグインがインストールされていません</p>";
+    } else {
+      let html = `<h3>インストール済みプラグイン (${data.count}個):</h3><table>
+        <tr>
+          <th>プラグイン名</th>
+          <th>サイズ (MB)</th>
+          <th>操作</th>
+        </tr>`;
+      
+      data.plugins.forEach(p => {
+        html += `<tr>
+          <td>${p.name}</td>
+          <td>${p.size_mb}</td>
+          <td><button class="btn-danger" onclick="deletePlugin('${p.name}')">削除</button></td>
+        </tr>`;
+      });
+      
+      html += "</table>";
+      pluginsList.innerHTML = html;
+    }
+  } catch (err) {
+    pluginsList.innerHTML = `<p style="color:red">${err.message}</p>`;
+  }
+}
+
+async function uploadPlugin() {
+  const file = pluginFileInput.files[0];
+  if (!file) {
+    alert("プラグインファイル(.jar)を選択してください");
+    return;
+  }
+  
+  if (!file.name.endsWith(".jar")) {
+    alert(".jarファイルのみアップロード可能です");
+    return;
+  }
+  
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    
+    const res = await fetch(`${API}/plugins/upload`, {
+      method: "POST",
+      headers: headers(),
+      body: form
+    });
+    
+    if (!res.ok) {
+      throw new Error("プラグインアップロード失敗: 管理者権限が必要です");
+    }
+    
+    const data = await res.json();
+    pluginResult.innerHTML = `
+      <strong>${data.plugin}</strong> をアップロードしました<br>
+      <small>※ サーバー再起動が必要です</small>
+    `;
+    pluginResult.style.color = "green";
+    
+    loadPlugins();
+  } catch (err) {
+    pluginResult.innerText = err.message;
+    pluginResult.style.color = "red";
+  }
+}
+
+async function deletePlugin(filename) {
+  if (!confirm(`${filename} を削除しますか？`)) return;
+  
+  try {
+    const res = await fetch(`${API}/plugins/${filename}`, {
+      method: "DELETE",
+      headers: headers()
+    });
+    
+    if (!res.ok) {
+      throw new Error("削除失敗: 管理者権限が必要です");
+    }
+    
+    pluginResult.innerHTML = `${filename} を削除しました<br><small>※ サーバー再起動が必要です</small>`;
+    pluginResult.style.color = "green";
+    
+    loadPlugins();
+  } catch (err) {
+    pluginResult.innerText = err.message;
+    pluginResult.style.color = "red";
+  }
+}
+
+async function reloadPlugins() {
+  try {
+    const res = await fetch(`${API}/plugins/reload`, {
+      method: "POST",
+      headers: headers()
+    });
+    
+    if (!res.ok) {
+      throw new Error("リロード失敗: 管理者権限が必要です");
+    }
+    
+    const data = await res.json();
+    pluginResult.innerText = `プラグインリロード結果:\n${data.output}`;
+    pluginResult.style.color = "green";
+  } catch (err) {
+    pluginResult.innerText = err.message;
+    pluginResult.style.color = "red";
+  }
+}
+
+// ========= API Keys 管理 =========
+async function loadApiKeys() {
+  try {
+    const res = await fetch(`${API}/auth/keys`, { headers: headers() });
+    if (!res.ok) throw new Error("Root権限が必要です");
+    
+    const keys = await res.json();
+    
+    let html = `<table>
+      <tr>
+        <th>プレイヤー名</th>
+        <th>Role</th>
+        <th>作成日時</th>
+        <th>操作</th>
+      </tr>`;
+    
+    keys.forEach(k => {
+      html += `<tr>
+        <td>${k.player_name || "N/A"}</td>
+        <td>${k.role}</td>
+        <td>${k.created}</td>
+        <td><button class="btn-danger" onclick="deleteApiKey('${k.api_key}')">削除</button></td>
+      </tr>`;
+    });
+    
+    html += "</table>";
+    apiKeysList.innerHTML = html;
+  } catch (err) {
+    apiKeysList.innerHTML = `<p style="color:red">${err.message}</p>`;
+  }
+}
+
+async function deleteApiKey(key) {
+  if (!confirm("本当に削除しますか？")) return;
+  
+  await fetch(`${API}/auth/keys/${key}`, {
+    method: "DELETE",
+    headers: headers()
+  });
+  
+  loadApiKeys();
 }
 
 // ========= Server =========
@@ -297,6 +701,7 @@ setInterval(()=>{ if(apiKey()) loadPlayers(); },5000);
 /* ========= Init ========= */
 apiKeyInput.value = apiKey();
 getStatus();
+loadMyInfo();
 </script>
 
 </body>
