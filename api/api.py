@@ -13,6 +13,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import glob
 import time
+from typing import Optional, List
 
 # =============================
 # 設定
@@ -67,6 +68,71 @@ def init_db():
             last_run TEXT
         )
         """)
+        
+        # v1.3.9: プレイヤーアクティビティ
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS player_activity (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_uuid TEXT NOT NULL,
+            player_name TEXT NOT NULL,
+            login_time TEXT NOT NULL,
+            logout_time TEXT,
+            session_duration INTEGER
+        )
+        """)
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS player_stats (
+            player_uuid TEXT PRIMARY KEY,
+            player_name TEXT NOT NULL,
+            total_playtime INTEGER DEFAULT 0,
+            total_sessions INTEGER DEFAULT 0,
+            first_join TEXT,
+            last_join TEXT
+        )
+        """)
+        
+        # v1.3.9: パフォーマンスメトリクス
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS performance_metrics (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            tps REAL,
+            memory_used INTEGER,
+            memory_total INTEGER,
+            memory_percent REAL,
+            entities INTEGER,
+            chunks INTEGER,
+            players INTEGER
+        )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_perf_timestamp ON performance_metrics(timestamp)")
+        
+        # v1.3.9: チャットログ
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS chat_logs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            player_uuid TEXT NOT NULL,
+            player_name TEXT NOT NULL,
+            message TEXT NOT NULL,
+            world TEXT
+        )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_timestamp ON chat_logs(timestamp)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_chat_player ON chat_logs(player_uuid)")
+        
+        # v1.3.9: コマンドテンプレート
+        conn.execute("""
+        CREATE TABLE IF NOT EXISTS command_templates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            player_uuid TEXT NOT NULL,
+            name TEXT NOT NULL,
+            command TEXT NOT NULL,
+            description TEXT,
+            created TEXT NOT NULL,
+            UNIQUE(player_uuid, name)
+        )
+        """)
 
 # =============================
 # FastAPI
@@ -74,7 +140,7 @@ def init_db():
 app = FastAPI(
     title="Minecraft Server Control API",
     description="Minecraft サーバー管理用 Web API",
-    version="4.1.0"
+    version="4.2.0"
 )
 
 # =============================
@@ -137,6 +203,21 @@ def cleanup_old_backups(schedule_name: str, max_backups: int):
         except Exception as e:
             print(f"Failed to delete {old_backup}: {e}")
 
+def cleanup_old_data():
+    """
+    古いデータを定期的にクリーンアップ
+    """
+    with get_db() as conn:
+        # パフォーマンスデータ: 7日以上前を削除
+        cutoff_perf = (datetime.datetime.now() - datetime.timedelta(days=7)).isoformat()
+        conn.execute("DELETE FROM performance_metrics WHERE timestamp < ?", (cutoff_perf,))
+        
+        # チャットログ: 30日以上前を削除
+        cutoff_chat = (datetime.datetime.now() - datetime.timedelta(days=30)).isoformat()
+        conn.execute("DELETE FROM chat_logs WHERE timestamp < ?", (cutoff_chat,))
+        
+        print("Old data cleanup completed")
+
 def load_schedules():
     """
     DB からスケジュールを読み込んでスケジューラーに登録
@@ -173,6 +254,15 @@ def load_schedules():
 def startup():
     init_db()
     load_schedules()
+    
+    # データクリーンアップを毎日実行
+    scheduler.add_job(
+        cleanup_old_data,
+        CronTrigger(hour=3, minute=0),  # 毎日3時に実行
+        id="cleanup_old_data",
+        replace_existing=True
+    )
+    
     scheduler.start()
 
 @app.on_event("shutdown")
@@ -499,6 +589,401 @@ def reload_plugins(user=Depends(verify_api_key)):
     return {"output": output}
 
 # =============================
+# v1.3.9: プレイヤーアクティビティ統計
+# =============================
+@app.get("/stats/player/{player_name}", tags=["Statistics"])
+def get_player_stats(player_name: str, user=Depends(verify_api_key)):
+    """
+    プレイヤーの統計情報を取得
+    """
+    with get_db() as conn:
+        # 統計情報
+        cur = conn.execute("""
+            SELECT player_uuid, player_name, total_playtime, total_sessions, first_join, last_join
+            FROM player_stats
+            WHERE player_name = ?
+        """, (player_name,))
+        stats = cur.fetchone()
+        
+        if not stats:
+            raise HTTPException(status_code=404, detail="Player not found")
+        
+        # 最近のアクティビティ
+        cur = conn.execute("""
+            SELECT login_time, logout_time, session_duration
+            FROM player_activity
+            WHERE player_name = ?
+            ORDER BY login_time DESC
+            LIMIT 10
+        """, (player_name,))
+        recent = [
+            {
+                "login": login,
+                "logout": logout,
+                "duration_minutes": duration // 60 if duration else None
+            }
+            for login, logout, duration in cur.fetchall()
+        ]
+        
+        log_action(user, "get_player_stats", player_name)
+        
+        return {
+            "player_uuid": stats[0],
+            "player_name": stats[1],
+            "total_playtime_hours": round(stats[2] / 3600, 2),
+            "total_sessions": stats[3],
+            "first_join": stats[4],
+            "last_join": stats[5],
+            "recent_activity": recent
+        }
+
+@app.get("/stats/players", tags=["Statistics"])
+def get_all_player_stats(user=Depends(verify_api_key)):
+    """
+    全プレイヤーの統計一覧
+    """
+    with get_db() as conn:
+        cur = conn.execute("""
+            SELECT player_name, total_playtime, total_sessions, last_join
+            FROM player_stats
+            ORDER BY total_playtime DESC
+        """)
+        
+        return [
+            {
+                "player_name": name,
+                "total_playtime_hours": round(playtime / 3600, 2),
+                "total_sessions": sessions,
+                "last_join": last_join
+            }
+            for name, playtime, sessions, last_join in cur.fetchall()
+        ]
+
+# =============================
+# v1.3.9: パフォーマンスモニタリング
+# =============================
+@app.get("/performance/current", tags=["Performance"])
+def get_current_performance(user=Depends(verify_api_key)):
+    """
+    現在のパフォーマンス情報を取得
+    """
+    with get_db() as conn:
+        cur = conn.execute("""
+            SELECT timestamp, tps, memory_used, memory_total, memory_percent, 
+                   entities, chunks, players
+            FROM performance_metrics
+            ORDER BY timestamp DESC
+            LIMIT 1
+        """)
+        row = cur.fetchone()
+        
+        if not row:
+            return {"message": "No performance data available"}
+        
+        return {
+            "timestamp": row[0],
+            "tps": row[1],
+            "memory_used_mb": row[2],
+            "memory_total_mb": row[3],
+            "memory_percent": row[4],
+            "entities": row[5],
+            "chunks": row[6],
+            "players": row[7]
+        }
+
+@app.get("/performance/history", tags=["Performance"])
+def get_performance_history(
+    hours: int = 1,
+    user=Depends(verify_api_key)
+):
+    """
+    パフォーマンス履歴を取得
+    """
+    cutoff = (datetime.datetime.now() - datetime.timedelta(hours=hours)).isoformat()
+    
+    with get_db() as conn:
+        cur = conn.execute("""
+            SELECT timestamp, tps, memory_percent, entities, chunks
+            FROM performance_metrics
+            WHERE timestamp > ?
+            ORDER BY timestamp ASC
+        """, (cutoff,))
+        
+        return [
+            {
+                "timestamp": ts,
+                "tps": tps,
+                "memory_percent": mem_pct,
+                "entities": ent,
+                "chunks": chunks
+            }
+            for ts, tps, mem_pct, ent, chunks in cur.fetchall()
+        ]
+
+class PerformanceRecord(BaseModel):
+    tps: float
+    memory_used: int
+    memory_total: int
+    memory_percent: float
+    entities: int
+    chunks: int
+    players: int
+
+@app.post("/performance/record", tags=["Performance"])
+def record_performance(
+    data: PerformanceRecord,
+    user=Depends(verify_api_key)
+):
+    """
+    パフォーマンスデータを記録（プラグインから呼び出される）
+    """
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO performance_metrics 
+            (timestamp, tps, memory_used, memory_total, memory_percent, entities, chunks, players)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            datetime.datetime.now().isoformat(),
+            data.tps,
+            data.memory_used,
+            data.memory_total,
+            data.memory_percent,
+            data.entities,
+            data.chunks,
+            data.players
+        ))
+    
+    return {"status": "recorded"}
+
+# =============================
+# v1.3.9: チャットログ
+# =============================
+class ChatMessage(BaseModel):
+    player_uuid: str
+    player_name: str
+    message: str
+    world: str
+
+@app.post("/chat/log", tags=["Chat"])
+def log_chat_message(
+    msg: ChatMessage,
+    user=Depends(verify_api_key)
+):
+    """
+    チャットメッセージを記録（プラグインから呼び出される）
+    """
+    with get_db() as conn:
+        conn.execute("""
+            INSERT INTO chat_logs (timestamp, player_uuid, player_name, message, world)
+            VALUES (?, ?, ?, ?, ?)
+        """, (
+            datetime.datetime.now().isoformat(),
+            msg.player_uuid,
+            msg.player_name,
+            msg.message,
+            msg.world
+        ))
+    
+    return {"status": "logged"}
+
+@app.get("/chat/recent", tags=["Chat"])
+def get_recent_chat(
+    limit: int = 30,
+    user=Depends(verify_api_key)
+):
+    """
+    最近のチャットログを取得
+    """
+    with get_db() as conn:
+        cur = conn.execute("""
+            SELECT timestamp, player_name, message, world
+            FROM chat_logs
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (limit,))
+        
+        return [
+            {
+                "timestamp": ts,
+                "player_name": name,
+                "message": msg,
+                "world": world
+            }
+            for ts, name, msg, world in cur.fetchall()
+        ]
+
+@app.get("/chat/search", tags=["Chat"])
+def search_chat(
+    keyword: str,
+    limit: int = 20,
+    user=Depends(verify_api_key)
+):
+    """
+    チャットログをキーワード検索
+    """
+    with get_db() as conn:
+        cur = conn.execute("""
+            SELECT timestamp, player_name, message, world
+            FROM chat_logs
+            WHERE message LIKE ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (f"%{keyword}%", limit))
+        
+        return [
+            {
+                "timestamp": ts,
+                "player_name": name,
+                "message": msg,
+                "world": world
+            }
+            for ts, name, msg, world in cur.fetchall()
+        ]
+
+@app.get("/chat/player/{player_name}", tags=["Chat"])
+def get_player_chat(
+    player_name: str,
+    limit: int = 20,
+    user=Depends(verify_api_key)
+):
+    """
+    特定プレイヤーのチャットログを取得
+    """
+    with get_db() as conn:
+        cur = conn.execute("""
+            SELECT timestamp, message, world
+            FROM chat_logs
+            WHERE player_name = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+        """, (player_name, limit))
+        
+        return [
+            {
+                "timestamp": ts,
+                "message": msg,
+                "world": world
+            }
+            for ts, msg, world in cur.fetchall()
+        ]
+
+@app.get("/chat/stats", tags=["Chat"])
+def get_chat_stats(user=Depends(verify_api_key)):
+    """
+    チャット統計を取得
+    """
+    with get_db() as conn:
+        # 総メッセージ数
+        total = conn.execute("SELECT COUNT(*) FROM chat_logs").fetchone()[0]
+        
+        # 今日のメッセージ数
+        today_start = datetime.datetime.now().replace(hour=0, minute=0, second=0).isoformat()
+        today_count = conn.execute(
+            "SELECT COUNT(*) FROM chat_logs WHERE timestamp >= ?",
+            (today_start,)
+        ).fetchone()[0]
+        
+        # 最もアクティブなプレイヤー（過去7日）
+        week_ago = (datetime.datetime.now() - datetime.timedelta(days=7)).isoformat()
+        cur = conn.execute("""
+            SELECT player_name, COUNT(*) as count
+            FROM chat_logs
+            WHERE timestamp >= ?
+            GROUP BY player_name
+            ORDER BY count DESC
+            LIMIT 1
+        """, (week_ago,))
+        top_chatter = cur.fetchone()
+        
+        return {
+            "total_messages": total,
+            "today_messages": today_count,
+            "top_chatter": {
+                "player_name": top_chatter[0] if top_chatter else None,
+                "message_count": top_chatter[1] if top_chatter else 0
+            }
+        }
+
+# =============================
+# v1.3.9: コマンドテンプレート
+# =============================
+class CommandTemplate(BaseModel):
+    name: str
+    command: str
+    description: Optional[str] = None
+
+@app.post("/templates", tags=["Templates"])
+def create_template(
+    template: CommandTemplate,
+    player_uuid: str = Header(..., alias="X-Player-UUID"),
+    user=Depends(verify_api_key)
+):
+    """
+    コマンドテンプレートを作成
+    """
+    with get_db() as conn:
+        try:
+            conn.execute("""
+                INSERT INTO command_templates (player_uuid, name, command, description, created)
+                VALUES (?, ?, ?, ?, ?)
+            """, (
+                player_uuid,
+                template.name,
+                template.command,
+                template.description,
+                datetime.datetime.now().isoformat()
+            ))
+        except sqlite3.IntegrityError:
+            raise HTTPException(status_code=400, detail="Template name already exists")
+    
+    log_action(user, "create_template", f"{template.name}: {template.command}")
+    return {"status": "created", "name": template.name}
+
+@app.get("/templates", tags=["Templates"])
+def get_templates(
+    player_uuid: str = Header(..., alias="X-Player-UUID"),
+    user=Depends(verify_api_key)
+):
+    """
+    プレイヤーのコマンドテンプレート一覧
+    """
+    with get_db() as conn:
+        cur = conn.execute("""
+            SELECT name, command, description, created
+            FROM command_templates
+            WHERE player_uuid = ?
+            ORDER BY created DESC
+        """, (player_uuid,))
+        
+        return [
+            {
+                "name": name,
+                "command": cmd,
+                "description": desc,
+                "created": created
+            }
+            for name, cmd, desc, created in cur.fetchall()
+        ]
+
+@app.delete("/templates/{name}", tags=["Templates"])
+def delete_template(
+    name: str,
+    player_uuid: str = Header(..., alias="X-Player-UUID"),
+    user=Depends(verify_api_key)
+):
+    """
+    コマンドテンプレートを削除
+    """
+    with get_db() as conn:
+        conn.execute(
+            "DELETE FROM command_templates WHERE player_uuid = ? AND name = ?",
+            (player_uuid, name)
+        )
+    
+    log_action(user, "delete_template", name)
+    return {"status": "deleted", "name": name}
+
+# =============================
 # Upload
 # =============================
 @app.post("/upload", tags=["File"])
@@ -699,7 +1184,8 @@ def create_schedule(req: CreateScheduleRequest, user=Depends(verify_api_key)):
         "id": schedule_id,
         "name": req.name,
         "cron_expression": req.cron_expression,
-        "max_backups": req.max_backups
+        "max_backups": req.max_backups,
+        "enabled": True
     }
 
 @app.get("/backup/schedules", tags=["Backup"])

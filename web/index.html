@@ -2,12 +2,12 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<title>Minecraft Server Controller</title>
+<title>Minecraft Server Controller v4.2</title>
 
 <style>
 body {
   font-family: Arial, sans-serif;
-  max-width: 1000px;
+  max-width: 1200px;
   margin: 40px auto;
   padding: 20px;
 }
@@ -20,12 +20,25 @@ h1, h2 {
   border: 1px solid #ccc;
   border-radius: 8px;
 }
+.new-feature {
+  border: 2px solid #28a745;
+  background-color: #f0fff4;
+}
+.new-badge {
+  display: inline-block;
+  background-color: #28a745;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 0.8em;
+  margin-left: 10px;
+}
 button {
   margin: 5px;
   padding: 8px 16px;
   cursor: pointer;
 }
-input[type="text"], select {
+input[type="text"], input[type="number"], select {
   width: 80%;
   padding: 6px;
   margin: 5px 0;
@@ -78,15 +91,34 @@ table th {
   color: white;
   border: none;
 }
+.btn-primary {
+  background-color: #007bff;
+  color: white;
+  border: none;
+}
 .hidden {
   display: none;
+}
+.stat-card {
+  display: inline-block;
+  background: #f8f9fa;
+  padding: 10px 15px;
+  margin: 5px;
+  border-radius: 5px;
+  border: 1px solid #dee2e6;
+}
+.stat-value {
+  font-size: 1.5em;
+  font-weight: bold;
+  color: #007bff;
 }
 </style>
 </head>
 
 <body>
 
-<h1>🟩 Minecraft Server Controller v4.0</h1>
+<h1>🟩 Minecraft Server Controller v4.2</h1>
+<p style="text-align:center" class="small">✨ v1.3.9 New Features: Player Stats, Performance Monitoring, Chat Logs, Templates</p>
 
 <!-- プレイヤー名登録 -->
 <div class="section" id="playerRegisterSection">
@@ -119,6 +151,59 @@ table th {
 <button onclick="getStatus()">Status</button>
 <p id="status">Status: Unknown</p>
 </div>
+
+<!-- ========== v1.3.9 新機能 ========== -->
+
+<!-- プレイヤー統計 -->
+<div class="section new-feature">
+<h2>📊 Player Statistics<span class="new-badge">NEW v1.3.9</span></h2>
+<p class="small">プレイヤーのプレイ時間、セッション数、ログイン履歴を確認</p>
+<input type="text" id="statsPlayerInput" placeholder="プレイヤー名">
+<button onclick="getPlayerStats()" class="btn-primary">統計を表示</button>
+<button onclick="getAllPlayerStats()" class="btn-primary">全プレイヤーランキング</button>
+<div id="playerStatsResult"></div>
+</div>
+
+<!-- パフォーマンスモニタリング -->
+<div class="section new-feature">
+<h2>⚡ Performance Monitoring<span class="new-badge">NEW v1.3.9</span></h2>
+<p class="small">サーバーのTPS、メモリ、エンティティ数をリアルタイム監視</p>
+<button onclick="getCurrentPerformance()" class="btn-primary">現在のパフォーマンス</button>
+<button onclick="getPerformanceHistory()" class="btn-primary">履歴（過去1時間）</button>
+<div id="performanceResult"></div>
+</div>
+
+<!-- チャットログ -->
+<div class="section new-feature">
+<h2>💬 Chat Logs<span class="new-badge">NEW v1.3.9</span></h2>
+<p class="small">チャットログの閲覧・検索</p>
+<button onclick="getRecentChat()" class="btn-primary">最近のチャット</button>
+<input type="text" id="chatSearchInput" placeholder="検索キーワード">
+<button onclick="searchChat()" class="btn-primary">検索</button>
+<input type="text" id="chatPlayerInput" placeholder="プレイヤー名">
+<button onclick="getPlayerChat()" class="btn-primary">プレイヤー別</button>
+<button onclick="getChatStats()" class="btn-primary">統計</button>
+<div id="chatLogsResult"></div>
+</div>
+
+<!-- コマンドテンプレート -->
+<div class="section new-feature">
+<h2>📝 Command Templates<span class="new-badge">NEW v1.3.9</span></h2>
+<p class="small">よく使うコマンドをテンプレートとして保存</p>
+<p class="small">※ プレイヤーUUIDが必要です（ゲーム内で /msc template を使用してください）</p>
+<button onclick="getTemplates()" class="btn-primary">テンプレート一覧</button>
+<div id="templatesResult"></div>
+<hr>
+<h3>テンプレート作成</h3>
+<input type="text" id="templatePlayerUUID" placeholder="プレイヤーUUID（例: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx）">
+<input type="text" id="templateName" placeholder="テンプレート名">
+<input type="text" id="templateCommand" placeholder="コマンド（例: /give {player} {item} {amount}）">
+<input type="text" id="templateDesc" placeholder="説明（任意）">
+<button onclick="createTemplate()" class="btn-success">作成</button>
+<p id="templateResult"></p>
+</div>
+
+<!-- ========== 既存機能 ========== -->
 
 <!-- Whitelist 管理 -->
 <div class="section">
@@ -276,9 +361,29 @@ const playerSelect = document.getElementById("playerSelect");
 const playerDetail = document.getElementById("playerDetail");
 const apiKeysList = document.getElementById("apiKeysList");
 
+// v1.3.9 新機能用
+const statsPlayerInput = document.getElementById("statsPlayerInput");
+const playerStatsResult = document.getElementById("playerStatsResult");
+const performanceResult = document.getElementById("performanceResult");
+const chatSearchInput = document.getElementById("chatSearchInput");
+const chatPlayerInput = document.getElementById("chatPlayerInput");
+const chatLogsResult = document.getElementById("chatLogsResult");
+const templatePlayerUUID = document.getElementById("templatePlayerUUID");
+const templateName = document.getElementById("templateName");
+const templateCommand = document.getElementById("templateCommand");
+const templateDesc = document.getElementById("templateDesc");
+const templateResult = document.getElementById("templateResult");
+const templatesResult = document.getElementById("templatesResult");
+
 // ========= API Key =========
 function apiKey() { return localStorage.getItem("apiKey")||""; }
 function headers() { return { "X-API-Key": apiKey() }; }
+function headersWithUUID(uuid) { 
+  return { 
+    "X-API-Key": apiKey(),
+    "X-Player-UUID": uuid
+  }; 
+}
 function saveKey() {
   const key = apiKeyInput.value.trim();
   if(!key) return alert("API Key を入力してください");
@@ -297,7 +402,6 @@ async function registerPlayer() {
     return;
   }
   
-  // Root API Keyが必要
   const rootKey = prompt("Root API Keyを入力してください:");
   if (!rootKey) return;
   
@@ -328,7 +432,6 @@ async function registerPlayer() {
     `;
     registerResult.style.color = "green";
     
-    // 自動で入力
     apiKeyInput.value = data.api_key;
   } catch (err) {
     registerResult.innerText = err.message;
@@ -358,7 +461,371 @@ async function loadMyInfo() {
   }
 }
 
-// ========= Whitelist =========
+// ========= v1.3.9: プレイヤー統計 =========
+async function getPlayerStats() {
+  const player = statsPlayerInput.value.trim();
+  if (!player) return alert("プレイヤー名を入力してください");
+  
+  try {
+    const res = await fetch(`${API}/stats/player/${player}`, { headers: headers() });
+    if (!res.ok) throw new Error("統計取得失敗");
+    
+    const data = await res.json();
+    
+    let html = `<h3>${data.player_name} の統計</h3>`;
+    html += `<div class="stat-card">
+      <div class="small">総プレイ時間</div>
+      <div class="stat-value">${data.total_playtime_hours}時間</div>
+    </div>`;
+    html += `<div class="stat-card">
+      <div class="small">総セッション数</div>
+      <div class="stat-value">${data.total_sessions}回</div>
+    </div>`;
+    html += `<div class="stat-card">
+      <div class="small">初回ログイン</div>
+      <div class="small">${new Date(data.first_join).toLocaleString()}</div>
+    </div>`;
+    html += `<div class="stat-card">
+      <div class="small">最終ログイン</div>
+      <div class="small">${new Date(data.last_join).toLocaleString()}</div>
+    </div>`;
+    
+    if (data.recent_activity.length > 0) {
+      html += `<h4>最近のアクティビティ</h4><table>
+        <tr><th>ログイン</th><th>ログアウト</th><th>時間</th></tr>`;
+      data.recent_activity.forEach(a => {
+        html += `<tr>
+          <td>${new Date(a.login).toLocaleString()}</td>
+          <td>${a.logout ? new Date(a.logout).toLocaleString() : '現在プレイ中'}</td>
+          <td>${a.duration_minutes ? a.duration_minutes + '分' : '-'}</td>
+        </tr>`;
+      });
+      html += `</table>`;
+    }
+    
+    playerStatsResult.innerHTML = html;
+  } catch (err) {
+    playerStatsResult.innerHTML = `<p style="color:red">${err.message}</p>`;
+  }
+}
+
+async function getAllPlayerStats() {
+  try {
+    const res = await fetch(`${API}/stats/players`, { headers: headers() });
+    if (!res.ok) throw new Error("統計取得失敗");
+    
+    const data = await res.json();
+    
+    if (data.length === 0) {
+      playerStatsResult.innerHTML = "<p>統計データがありません</p>";
+      return;
+    }
+    
+    let html = `<h3>プレイヤーランキング（プレイ時間順）</h3><table>
+      <tr><th>順位</th><th>プレイヤー名</th><th>総プレイ時間</th><th>セッション数</th><th>最終ログイン</th></tr>`;
+    
+    data.forEach((p, i) => {
+      html += `<tr>
+        <td>${i + 1}</td>
+        <td>${p.player_name}</td>
+        <td>${p.total_playtime_hours}時間</td>
+        <td>${p.total_sessions}回</td>
+        <td>${new Date(p.last_join).toLocaleString()}</td>
+      </tr>`;
+    });
+    
+    html += `</table>`;
+    playerStatsResult.innerHTML = html;
+  } catch (err) {
+    playerStatsResult.innerHTML = `<p style="color:red">${err.message}</p>`;
+  }
+}
+
+// ========= v1.3.9: パフォーマンス監視 =========
+async function getCurrentPerformance() {
+  try {
+    const res = await fetch(`${API}/performance/current`, { headers: headers() });
+    if (!res.ok) throw new Error("パフォーマンスデータ取得失敗");
+    
+    const data = await res.json();
+    
+    if (data.message) {
+      performanceResult.innerHTML = `<p>${data.message}</p>`;
+      return;
+    }
+    
+    let html = `<h3>現在のパフォーマンス</h3>`;
+    html += `<div class="stat-card">
+      <div class="small">TPS</div>
+      <div class="stat-value" style="color: ${data.tps >= 18 ? 'green' : data.tps >= 15 ? 'orange' : 'red'}">${data.tps.toFixed(2)}</div>
+    </div>`;
+    html += `<div class="stat-card">
+      <div class="small">メモリ使用率</div>
+      <div class="stat-value">${data.memory_percent.toFixed(1)}%</div>
+      <div class="small">${data.memory_used_mb} / ${data.memory_total_mb} MB</div>
+    </div>`;
+    html += `<div class="stat-card">
+      <div class="small">エンティティ数</div>
+      <div class="stat-value">${data.entities}</div>
+    </div>`;
+    html += `<div class="stat-card">
+      <div class="small">チャンク数</div>
+      <div class="stat-value">${data.chunks}</div>
+    </div>`;
+    html += `<div class="stat-card">
+      <div class="small">プレイヤー数</div>
+      <div class="stat-value">${data.players}</div>
+    </div>`;
+    html += `<p class="small">更新: ${new Date(data.timestamp).toLocaleString()}</p>`;
+    
+    performanceResult.innerHTML = html;
+  } catch (err) {
+    performanceResult.innerHTML = `<p style="color:red">${err.message}</p>`;
+  }
+}
+
+async function getPerformanceHistory() {
+  try {
+    const res = await fetch(`${API}/performance/history?hours=1`, { headers: headers() });
+    if (!res.ok) throw new Error("履歴取得失敗");
+    
+    const data = await res.json();
+    
+    if (data.length === 0) {
+      performanceResult.innerHTML = "<p>履歴データがありません</p>";
+      return;
+    }
+    
+    let html = `<h3>パフォーマンス履歴（過去1時間）</h3><table>
+      <tr><th>時刻</th><th>TPS</th><th>メモリ使用率</th><th>エンティティ</th><th>チャンク</th></tr>`;
+    
+    // 最新10件を表示
+    data.slice(-10).forEach(p => {
+      html += `<tr>
+        <td>${new Date(p.timestamp).toLocaleTimeString()}</td>
+        <td style="color: ${p.tps >= 18 ? 'green' : p.tps >= 15 ? 'orange' : 'red'}">${p.tps.toFixed(2)}</td>
+        <td>${p.memory_percent.toFixed(1)}%</td>
+        <td>${p.entities}</td>
+        <td>${p.chunks}</td>
+      </tr>`;
+    });
+    
+    html += `</table><p class="small">全${data.length}件のデータポイント</p>`;
+    performanceResult.innerHTML = html;
+  } catch (err) {
+    performanceResult.innerHTML = `<p style="color:red">${err.message}</p>`;
+  }
+}
+
+// ========= v1.3.9: チャットログ =========
+async function getRecentChat() {
+  try {
+    const res = await fetch(`${API}/chat/recent?limit=30`, { headers: headers() });
+    if (!res.ok) throw new Error("チャットログ取得失敗");
+    
+    const data = await res.json();
+    
+    if (data.length === 0) {
+      chatLogsResult.innerHTML = "<p>チャットログがありません</p>";
+      return;
+    }
+    
+    let html = `<h3>最近のチャット（${data.length}件）</h3><table>
+      <tr><th>時刻</th><th>プレイヤー</th><th>ワールド</th><th>メッセージ</th></tr>`;
+    
+    data.forEach(c => {
+      html += `<tr>
+        <td>${new Date(c.timestamp).toLocaleString()}</td>
+        <td>${c.player_name}</td>
+        <td>${c.world}</td>
+        <td>${c.message}</td>
+      </tr>`;
+    });
+    
+    html += `</table>`;
+    chatLogsResult.innerHTML = html;
+  } catch (err) {
+    chatLogsResult.innerHTML = `<p style="color:red">${err.message}</p>`;
+  }
+}
+
+async function searchChat() {
+  const keyword = chatSearchInput.value.trim();
+  if (!keyword) return alert("検索キーワードを入力してください");
+  
+  try {
+    const res = await fetch(`${API}/chat/search?keyword=${encodeURIComponent(keyword)}&limit=20`, 
+      { headers: headers() });
+    if (!res.ok) throw new Error("検索失敗");
+    
+    const data = await res.json();
+    
+    if (data.length === 0) {
+      chatLogsResult.innerHTML = `<p>「${keyword}」に一致するメッセージが見つかりませんでした</p>`;
+      return;
+    }
+    
+    let html = `<h3>検索結果: "${keyword}" （${data.length}件）</h3><table>
+      <tr><th>時刻</th><th>プレイヤー</th><th>ワールド</th><th>メッセージ</th></tr>`;
+    
+    data.forEach(c => {
+      html += `<tr>
+        <td>${new Date(c.timestamp).toLocaleString()}</td>
+        <td>${c.player_name}</td>
+        <td>${c.world}</td>
+        <td>${c.message}</td>
+      </tr>`;
+    });
+    
+    html += `</table>`;
+    chatLogsResult.innerHTML = html;
+  } catch (err) {
+    chatLogsResult.innerHTML = `<p style="color:red">${err.message}</p>`;
+  }
+}
+
+async function getPlayerChat() {
+  const player = chatPlayerInput.value.trim();
+  if (!player) return alert("プレイヤー名を入力してください");
+  
+  try {
+    const res = await fetch(`${API}/chat/player/${player}?limit=20`, { headers: headers() });
+    if (!res.ok) throw new Error("取得失敗");
+    
+    const data = await res.json();
+    
+    if (data.length === 0) {
+      chatLogsResult.innerHTML = `<p>${player} のチャットログがありません</p>`;
+      return;
+    }
+    
+    let html = `<h3>${player} のチャット（${data.length}件）</h3><table>
+      <tr><th>時刻</th><th>ワールド</th><th>メッセージ</th></tr>`;
+    
+    data.forEach(c => {
+      html += `<tr>
+        <td>${new Date(c.timestamp).toLocaleString()}</td>
+        <td>${c.world}</td>
+        <td>${c.message}</td>
+      </tr>`;
+    });
+    
+    html += `</table>`;
+    chatLogsResult.innerHTML = html;
+  } catch (err) {
+    chatLogsResult.innerHTML = `<p style="color:red">${err.message}</p>`;
+  }
+}
+
+async function getChatStats() {
+  try {
+    const res = await fetch(`${API}/chat/stats`, { headers: headers() });
+    if (!res.ok) throw new Error("統計取得失敗");
+    
+    const data = await res.json();
+    
+    let html = `<h3>チャット統計</h3>`;
+    html += `<div class="stat-card">
+      <div class="small">総メッセージ数</div>
+      <div class="stat-value">${data.total_messages}</div>
+    </div>`;
+    html += `<div class="stat-card">
+      <div class="small">今日のメッセージ</div>
+      <div class="stat-value">${data.today_messages}</div>
+    </div>`;
+    html += `<div class="stat-card">
+      <div class="small">最もアクティブ（過去7日）</div>
+      <div class="stat-value">${data.top_chatter.player_name || 'N/A'}</div>
+      <div class="small">${data.top_chatter.message_count}メッセージ</div>
+    </div>`;
+    
+    chatLogsResult.innerHTML = html;
+  } catch (err) {
+    chatLogsResult.innerHTML = `<p style="color:red">${err.message}</p>`;
+  }
+}
+
+// ========= v1.3.9: コマンドテンプレート =========
+async function createTemplate() {
+  const uuid = templatePlayerUUID.value.trim();
+  const name = templateName.value.trim();
+  const command = templateCommand.value.trim();
+  const desc = templateDesc.value.trim();
+  
+  if (!uuid || !name || !command) {
+    alert("UUID、名前、コマンドを入力してください");
+    return;
+  }
+  
+  try {
+    const res = await fetch(`${API}/templates`, {
+      method: "POST",
+      headers: {
+        ...headersWithUUID(uuid),
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        name: name,
+        command: command,
+        description: desc || null
+      })
+    });
+    
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "作成失敗");
+    }
+    
+    templateResult.innerHTML = `<span style="color:green">テンプレート「${name}」を作成しました</span>`;
+    templateName.value = "";
+    templateCommand.value = "";
+    templateDesc.value = "";
+  } catch (err) {
+    templateResult.innerHTML = `<span style="color:red">${err.message}</span>`;
+  }
+}
+
+async function getTemplates() {
+  const uuid = prompt("プレイヤーUUIDを入力してください:");
+  if (!uuid) return;
+  
+  try {
+    const res = await fetch(`${API}/templates`, {
+      headers: headersWithUUID(uuid)
+    });
+    
+    if (!res.ok) throw new Error("テンプレート取得失敗");
+    
+    const data = await res.json();
+    
+    if (data.length === 0) {
+      templatesResult.innerHTML = "<p>テンプレートがありません</p>";
+      return;
+    }
+    
+    let html = `<h3>テンプレート一覧（${data.length}件）</h3><table>
+      <tr><th>名前</th><th>コマンド</th><th>説明</th><th>作成日時</th></tr>`;
+    
+    data.forEach(t => {
+      html += `<tr>
+        <td>${t.name}</td>
+        <td><code>${t.command}</code></td>
+        <td>${t.description || '-'}</td>
+        <td>${new Date(t.created).toLocaleString()}</td>
+      </tr>`;
+    });
+    
+    html += `</table>`;
+    templatesResult.innerHTML = html;
+  } catch (err) {
+    templatesResult.innerHTML = `<p style="color:red">${err.message}</p>`;
+  }
+}
+
+// ========= 既存機能（省略可能 - 前のコードと同じ） =========
+// Whitelist, OP, Plugins, Console, Upload, Backup, etc.
+// （前のindex.htmlと同じコードを使用）
+
 async function whitelistAdd() {
   const player = whitelistPlayerInput.value.trim();
   if (!player) return alert("プレイヤー名を入力してください");
@@ -419,7 +886,6 @@ async function loadWhitelist() {
   }
 }
 
-// ========= Operator =========
 async function opAdd() {
   const player = opPlayerInput.value.trim();
   if (!player) return alert("プレイヤー名を入力してください");
@@ -466,7 +932,6 @@ async function opRemove() {
   }
 }
 
-// ========= プラグイン管理 =========
 async function loadPlugins() {
   try {
     const res = await fetch(`${API}/plugins`, { headers: headers() });
@@ -583,7 +1048,6 @@ async function reloadPlugins() {
   }
 }
 
-// ========= API Keys 管理 =========
 async function loadApiKeys() {
   try {
     const res = await fetch(`${API}/auth/keys`, { headers: headers() });
@@ -626,11 +1090,11 @@ async function deleteApiKey(key) {
   loadApiKeys();
 }
 
-// ========= Server =========
 async function control(action){
   await fetch(`${API}/${action}`, {method:"POST", headers:headers()});
   getStatus();
 }
+
 async function getStatus(){
   try{
     const res = await fetch(`${API}/status`,{headers:headers()});
@@ -643,7 +1107,6 @@ async function getStatus(){
   }
 }
 
-// ========= Console =========
 async function sendCommand(){
   const cmd=cmdInput.value.trim();
   if(!cmd) return;
@@ -655,6 +1118,7 @@ async function sendCommand(){
   cmdOutput.scrollTop = cmdOutput.scrollHeight;
   cmdInput.value="";
 }
+
 async function loadHistory(){
   const res = await fetch(`${API}/exec/history`,{headers:headers()});
   const list = await res.json();
@@ -662,7 +1126,6 @@ async function loadHistory(){
   list.forEach(e=>cmdOutput.value+=`[${e.time}]\n> ${e.command}\n${e.output}\n\n`);
 }
 
-// ========= Upload =========
 async function upload(){
   const files=fileInput.files;
   if(!files.length) return alert("ファイル or フォルダを選択してください");
@@ -675,7 +1138,6 @@ async function upload(){
   uploadResult.style.color="green";
 }
 
-// ========= Backup =========
 async function backup(){
   const res = await fetch(`${API}/backup`,{method:"POST", headers:headers()});
   const data = await res.json();
@@ -776,7 +1238,6 @@ async function deleteBackup(filename) {
   }
 }
 
-// ========= Backup Schedules =========
 async function createSchedule() {
   const name = scheduleName.value.trim();
   const cron = cronExpression.value.trim();
@@ -814,7 +1275,6 @@ async function createSchedule() {
     `;
     scheduleResult.style.color = "green";
     
-    // 入力をクリア
     scheduleName.value = "";
     cronExpression.value = "";
     
@@ -866,7 +1326,6 @@ async function loadSchedules() {
       
       html += "</table>";
       
-      // cron式のヘルプ
       html += `
         <div class="small" style="margin-top:10px">
           <strong>cron式の例:</strong><br>
@@ -923,7 +1382,6 @@ async function deleteSchedule(id) {
   }
 }
 
-// ========= Logs =========
 async function getLogs(){
   const res = await fetch(`${API}/logs`,{headers:headers()});
   const data = await res.json();
@@ -931,13 +1389,11 @@ async function getLogs(){
   logsResult.scrollTop=logsResult.scrollHeight;
 }
 
-// ========= Metrics =========
 async function getMetrics(){
   const res = await fetch(`${API}/metrics`,{headers:headers()});
   metricsResult.textContent=JSON.stringify(await res.json(),null,2);
 }
 
-// ========= Audit Logs =========
 async function getAuditLogs(){
   const res = await fetch(`${API}/audit/logs`,{headers:headers()});
   if(!res.ok){ auditResult.textContent="権限がありません（root API Key が必要）"; return; }
@@ -945,7 +1401,6 @@ async function getAuditLogs(){
   auditResult.textContent = logs.map(l=>`[${l.time}] (${l.role}) ${l.action}\n  detail: ${l.detail}\n  ip: ${l.ip}\n`).join("\n");
 }
 
-// ========= Players =========
 async function loadPlayers(){
   const res = await fetch(`${API}/players`,{headers:headers()});
   if(!res.ok){ alert("プレイヤー情報取得失敗"); return; }
@@ -954,6 +1409,7 @@ async function loadPlayers(){
   data.players.forEach(p=>{ const opt=document.createElement("option"); opt.value=p; opt.innerText=p; playerSelect.appendChild(opt); });
   playerDetail.textContent=`オンラインプレイヤー: ${data.count}`;
 }
+
 async function showPlayerDetail(){
   const name=playerSelect.value;
   if(!name){ playerDetail.textContent=""; return; }
@@ -963,7 +1419,6 @@ async function showPlayerDetail(){
   playerDetail.textContent=JSON.stringify(data.raw_nbt,null,2);
 }
 
-// Auto-refresh players every 5s
 setInterval(()=>{ if(apiKey()) loadPlayers(); },5000);
 
 /* ========= Init ========= */
